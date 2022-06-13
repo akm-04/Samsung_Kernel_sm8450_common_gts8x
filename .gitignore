@@ -164,3 +164,16 @@ arch/arm/boot/dts/vendor
 
 # Documentation toolchain
 sphinx_*/
+
+# kernel/build configuration files
+build.config.msm.*
+
+# Object directory
+out/
+AnyKernel3/
+NetErnel_modules/
+Mod/
+build.log
+KernelSU/
+susfs4ksu/
+KernelSU-Next/
