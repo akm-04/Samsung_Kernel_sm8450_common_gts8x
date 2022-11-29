@@ -3404,7 +3404,7 @@ static void kfree_rcu_monitor(struct work_struct *work)
 			// objects queued on the linked list.
 			if (!krwp->head_free) {
 				krwp->head_free = krcp->head;
-				krcp->head = NULL;
+				WRITE_ONCE(krcp->head, NULL);
 			}
 
 			WRITE_ONCE(krcp->count, 0);
@@ -3418,6 +3418,8 @@ static void kfree_rcu_monitor(struct work_struct *work)
 		}
 	}
 
+	raw_spin_unlock_irqrestore(&krcp->lock, flags);
+
 	// If there is nothing to detach, it means that our job is
 	// successfully done here. In case of having at least one
 	// of the channels that is still busy we should rearm the
@@ -3425,8 +3427,6 @@ static void kfree_rcu_monitor(struct work_struct *work)
 	// still in progress.
 	if (need_offload_krc(krcp))
 		schedule_delayed_monitor_work(krcp);
-
-	raw_spin_unlock_irqrestore(&krcp->lock, flags);
 }
 
 static enum hrtimer_restart
@@ -3581,7 +3581,7 @@ void kvfree_call_rcu(struct rcu_head *head, rcu_callback_t func)
 
 		head->func = func;
 		head->next = krcp->head;
-		krcp->head = head;
+		WRITE_ONCE(krcp->head, head);
 		success = true;
 	}
 
@@ -3658,15 +3658,12 @@ static struct shrinker kfree_rcu_shrinker = {
 void __init kfree_rcu_scheduler_running(void)
 {
 	int cpu;
-	unsigned long flags;
 
 	for_each_possible_cpu(cpu) {
 		struct kfree_rcu_cpu *krcp = per_cpu_ptr(&krc, cpu);
 
-		raw_spin_lock_irqsave(&krcp->lock, flags);
 		if (need_offload_krc(krcp))
 			schedule_delayed_monitor_work(krcp);
-		raw_spin_unlock_irqrestore(&krcp->lock, flags);
 	}
 }
 
