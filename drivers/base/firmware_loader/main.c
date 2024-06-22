@@ -471,7 +471,8 @@ static const char * const fw_path[] = {
 	"/lib/firmware/updates",
 	"/lib/firmware/" UTS_RELEASE,
 	"/lib/firmware",
-	"/vendor/firmware"
+	"/vendor/firmware",
+	"/vendor/firmware_mnt/image"
 #ifdef CONFIG_SUPPORT_SSC_SPU
 	, "/spu/sensorhub"
 #endif
