@@ -21,6 +21,7 @@
 #include <ipc/gpr-lite.h>
 #include <linux/rpmsg.h>
 #include <linux/of.h>
+#include <linux/delay.h>
 
 #include <soc/snd_event.h>
 #include <dsp/audio_notifier.h>
@@ -573,6 +574,8 @@ static void gpr_remove(struct rpmsg_device *rpdev)
 	device_for_each_child(&rpdev->dev, NULL, gpr_remove_device);
 }
 
+static bool gpr_ready;
+
 /*
  * __gpr_driver_register() - Client driver registration with gprbus
  *
@@ -584,6 +587,14 @@ static void gpr_remove(struct rpmsg_device *rpdev)
  */
 int __gpr_driver_register(struct gpr_driver *drv, struct module *owner)
 {
+	int retry = 0;
+
+	while (!gpr_ready && retry++ < 50)
+		msleep(50);
+
+	if (!gpr_ready)
+		return -ENODEV;
+
 	drv->driver.bus = &gprbus;
 	drv->driver.owner = owner;
 
@@ -627,6 +638,9 @@ static int __init gpr_init(void)
 		ret = register_rpmsg_driver(&gpr_driver);
 	else
 		bus_unregister(&gprbus);
+
+	if (!ret)
+		gpr_ready = true;
 
 	return ret;
 }
