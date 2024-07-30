@@ -792,6 +792,8 @@ static void swr_drv_shutdown(struct device *dev)
 		sdrv->shutdown(to_swr_device(dev));
 }
 
+static bool swr_ready;
+
 /**
  * swr_driver_register - register a soundwire driver
  * @drv: the driver to register
@@ -799,6 +801,14 @@ static void swr_drv_shutdown(struct device *dev)
  */
 int swr_driver_register(struct swr_driver *drv)
 {
+	int retry = 0;
+
+	while (!swr_ready && retry++ < 50)
+		msleep(50);
+
+	if (!swr_ready)
+		return -ENODEV;
+
 	drv->driver.bus = &soundwire_type;
 	if (drv->probe)
 		drv->driver.probe = swr_drv_probe;
@@ -1132,6 +1142,9 @@ static int __init soundwire_init(void)
 
 	if (retval)
 		bus_unregister(&soundwire_type);
+
+	if (!retval)
+		swr_ready = true;
 
 	return retval;
 }
