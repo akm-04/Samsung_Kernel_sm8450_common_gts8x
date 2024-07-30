@@ -12,6 +12,7 @@
 #include <linux/of_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/slimbus.h>
+#include <linux/delay.h>
 #include "slimbus.h"
 
 static DEFINE_IDA(ctrl_ida);
@@ -111,6 +112,8 @@ struct bus_type slimbus_bus = {
 };
 EXPORT_SYMBOL_GPL(slimbus_bus);
 
+static bool slimbus_ready;
+
 /*
  * __slim_driver_register() - Client driver registration with SLIMbus
  *
@@ -122,6 +125,14 @@ EXPORT_SYMBOL_GPL(slimbus_bus);
  */
 int __slim_driver_register(struct slim_driver *drv, struct module *owner)
 {
+	int retry = 0;
+
+	while (!slimbus_ready && retry++ < 50)
+		msleep(50);
+
+	if (!slimbus_ready)
+		return -ENODEV;
+
 	/* ID table and probe are mandatory */
 	if (!(drv->driver.of_match_table || drv->id_table) || !drv->probe)
 		return -EINVAL;
@@ -550,7 +561,14 @@ module_exit(slimbus_exit);
 
 static int __init slimbus_init(void)
 {
-	return bus_register(&slimbus_bus);
+	int ret;
+
+	ret = bus_register(&slimbus_bus);
+
+	if (!ret)
+		slimbus_ready = true;
+
+	return ret;
 }
 postcore_initcall(slimbus_init);
 
