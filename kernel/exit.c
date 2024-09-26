@@ -729,6 +729,9 @@ void __noreturn do_exit(long code)
 	struct task_struct *tsk = current;
 	int group_dead;
 
+	/* Trigger probing of device drivers when, e.g., modprobe exits */
+	if (IS_ENABLED(CONFIG_INTEGRATE_MODULES))
+		integrated_module_load_end();
 	/*
 	 * We can get here from a kernel oops, sometimes with preemption off.
 	 * Start by checking for critical errors.
