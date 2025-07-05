@@ -44,7 +44,7 @@ extern char mipi_string[20];
  * ZZ ZZ ZZ ZZ - FREQ INFO
  */
 
-void *bsearch(const void *key, const void *base, size_t num, size_t size, cmp_func_t cmp)
+void *sbsearch(const void *key, const void *base, size_t num, size_t size, cmp_func_t cmp)
 {
 	const char *pivot;
 	int result;
@@ -161,7 +161,7 @@ int cam_mipi_select_mipi_by_rf_channel(const struct cam_mipi_channel *channel_li
 	CAM_INFO(CAM_SENSOR, "[AM_DBG] searching rf channel s [%d,%d,%d]",
 		input_ch.rat, input_ch.band, input_ch.channel);
 
-	result = bsearch(&key,
+	result = sbsearch(&key,
 			channel_list,
 			size,
 			sizeof(struct cam_mipi_channel),
