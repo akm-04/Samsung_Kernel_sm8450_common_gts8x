@@ -69,7 +69,7 @@ static char __initdata errors_str[16 * 1024];
 bool __init add_lazy_initcall(initcall_t fn, char modname[], char filename[])
 {
 	int i;
-	enum lazy_initcall_type type = NORMAL;
+	enum lazy_initcall_type type = LAZY_NORMAL;
 
 	for (i = 0; blacklist[i]; i++) {
 		if (!strcmp(blacklist[i], modname))
@@ -289,7 +289,7 @@ static noinline void __init load_modname(const char * const modname, const char 
 	// Check if all modules are loaded so that __init memory can be released
 	match = false;
 	for (i = 0; i < counter; i++) {
-		if (lazy_initcalls[i].type == NORMAL && !lazy_initcalls[i].loaded)
+		if (lazy_initcalls[i].type == LAZY_NORMAL && !lazy_initcalls[i].loaded)
 			match = true;
 	}
 
@@ -328,7 +328,7 @@ static noinline int __init __load_module(struct load_info *info, const char __us
 	if (err)
 		goto err;
 
-	load_modname(info->name, uargs, NORMAL);
+	load_modname(info->name, uargs, LAZY_NORMAL);
 
 err:
 	return err;
