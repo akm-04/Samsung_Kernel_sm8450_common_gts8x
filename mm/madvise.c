@@ -681,7 +681,7 @@ static long madvise_writeback(struct vm_area_struct *vma,
 	if (!can_madv_lru_vma(vma))
 		return 0;
 
-	if (!can_do_pageout(vma))
+	if (!vma_is_anonymous(vma))
 		return 0;
 
 	if (am_app_launch)
