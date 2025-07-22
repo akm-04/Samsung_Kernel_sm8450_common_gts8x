@@ -25,6 +25,7 @@
 #define cfi_slowpath_handler	__cfi_slowpath
 #endif /* CONFIG_CFI_PERMISSIVE */
 
+
 /*
  * __cfi_check won't be linked against compiler generated one,
  * if no KBUILD_CFLAGS_MODULE is passed to compiler.

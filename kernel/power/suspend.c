@@ -32,6 +32,7 @@
 #include <linux/compiler.h>
 #include <linux/moduleparam.h>
 #include <linux/wakeup_reason.h>
+#include <linux/regulator/machine.h>
 
 #include "power.h"
 
@@ -406,6 +407,9 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 					 suspend_stats.failed_devs[last_dev]);
 		goto Platform_finish;
 	}
+
+	regulator_show_enabled();
+
 	error = platform_suspend_prepare_late(state);
 	if (error)
 		goto Devices_early_resume;
@@ -608,7 +612,6 @@ static int enter_state(suspend_state_t state)
 	return error;
 }
 
-#ifdef CONFIG_RTC_LIB
 static void pm_suspend_marker(char *annotation)
 {
 	struct timespec64 ts;
@@ -620,7 +623,6 @@ static void pm_suspend_marker(char *annotation)
 		annotation, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 		tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec);
 }
-#endif /* CONFIG_RTC_LIB */
 
 /**
  * pm_suspend - Externally visible function for suspending the system.
@@ -636,9 +638,7 @@ int pm_suspend(suspend_state_t state)
 	if (state <= PM_SUSPEND_ON || state >= PM_SUSPEND_MAX)
 		return -EINVAL;
 
-#ifdef CONFIG_RTC_LIB
 	pm_suspend_marker("entry");
-#endif /* CONFIG_RTC_LIB */
 	error = enter_state(state);
 	if (error) {
 		suspend_stats.fail++;
@@ -646,9 +646,7 @@ int pm_suspend(suspend_state_t state)
 	} else {
 		suspend_stats.success++;
 	}
-#ifdef CONFIG_RTC_LIB
 	pm_suspend_marker("exit");
-#endif /* CONFIG_RTC_LIB */
 	return error;
 }
 EXPORT_SYMBOL(pm_suspend);
