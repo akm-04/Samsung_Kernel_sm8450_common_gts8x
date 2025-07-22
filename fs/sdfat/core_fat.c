@@ -684,33 +684,36 @@ rewind:
 				EXT_DENTRY_T *ext_ep = (EXT_DENTRY_T *)ep;
 				u32 cur_ord = (u32)ext_ep->order;
 				u32 cur_chksum = (s32)ext_ep->checksum;
+				u32 new_lfn = (cur_ord & MSDOS_LAST_LFN);
 				s32 len = 13;
 				u16 unichar;
 
+				cur_ord &= ~(MSDOS_LAST_LFN);
 				num_empty = 0;
 				candi_empty.eidx = -1;
 
+				/* check invalid lfn order */
+				if (!cur_ord || (cur_ord > MAX_LFN_ORDER))
+					goto reset_dentry_set;
+
 				/* check whether new lfn or not */
-				if (cur_ord & MSDOS_LAST_LFN) {
-					cur_ord &= ~(MSDOS_LAST_LFN);
+				if (new_lfn) {
 					chksum = cur_chksum;
-					len = (13 * (cur_ord-1));
+					len = (13 * (cur_ord - 1));
 					uniname = (p_uniname->name + len);
 					lfn_ord = cur_ord + 1;
 					lfn_len = 0;
 
 					/* check minimum name length */
-					if (cur_ord &&
-						(len > p_uniname->name_len)) {
+					if (len > p_uniname->name_len) {
 						/* MISMATCHED NAME LENGTH */
 						lfn_len = -1;
 					}
 					len = 0;
 				}
 
-				/* invalid lfn order */
-				if (!cur_ord || (cur_ord > MAX_LFN_ORDER) ||
-					((cur_ord + 1) != lfn_ord))
+				/* check if lfn is a consecutive number */
+				if ((cur_ord + 1) != lfn_ord)
 					goto reset_dentry_set;
 
 				/* check checksum of directory entry set */
@@ -1202,6 +1205,7 @@ static FS_FUNC_T fat_fs_func = {
 	.set_entry_flag = fat_set_entry_flag,
 	.get_entry_clu0 = fat_get_entry_clu0,
 	.set_entry_clu0 = fat_set_entry_clu0,
+	.get_entry_validsize = NULL,
 	.get_entry_size = fat_get_entry_size,
 	.set_entry_size = fat_set_entry_size,
 	.get_entry_time = fat_get_entry_time,
@@ -1230,6 +1234,7 @@ static FS_FUNC_T amap_fat_fs_func = {
 	.set_entry_flag = fat_set_entry_flag,
 	.get_entry_clu0 = fat_get_entry_clu0,
 	.set_entry_clu0 = fat_set_entry_clu0,
+	.get_entry_validsize = NULL,
 	.get_entry_size = fat_get_entry_size,
 	.set_entry_size = fat_set_entry_size,
 	.get_entry_time = fat_get_entry_time,

@@ -71,7 +71,11 @@ static struct kobject sdfat_uevent_kobj;
 int sdfat_uevent_init(struct kset *sdfat_kset)
 {
 	int err;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0)
+	const struct kobj_type *ktype = get_ktype(&sdfat_kset->kobj);
+#else
 	struct kobj_type *ktype = get_ktype(&sdfat_kset->kobj);
+#endif
 
 	sdfat_uevent_kobj.kset = sdfat_kset;
 	err = kobject_init_and_add(&sdfat_uevent_kobj, ktype, NULL, "uevent");
@@ -213,17 +217,18 @@ EXPORT_SYMBOL(sdfat_log_version);
 #define SECS_PER_HOUR   (60 * SECS_PER_MIN)
 #define SECS_PER_DAY    (24 * SECS_PER_HOUR)
 
+/* do not use time_t directly to prevent compile errors on 32bit kernel */
 #define time_do_div(ori, base)	\
 ({				\
-	time_t __ori = ori;	\
+	u64 __ori = ori;	\
 	do_div(__ori, base);	\
-	__ori;			\
+	(time_t)__ori;		\
 })
 
-#define time_do_mod(ori, base)	\
-({				\
-	time_t __ori = ori;	\
-	do_div(__ori, base);	\
+#define time_do_mod(ori, base)		\
+({					\
+	u64 __ori = ori;		\
+	(time_t)do_div(__ori, base);	\
 })
 
 #define MAKE_LEAP_YEAR(leap_year, year)                         \
@@ -240,6 +245,13 @@ static time_t accum_days_in_year[] = {
 	/* Month : N 01  02  03  04  05  06  07  08  09  10  11  12 */
 	0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 0, 0, 0,
 };
+
+static inline int sdfat_tz_offset(struct sdfat_sb_info *sbi)
+{
+	if (sbi->options.tz_set)
+		return -sbi->options.time_offset;
+	return sys_tz.tz_minuteswest;
+}
 
 #define TIMEZONE_SEC(x)	((x) * 15 * SECS_PER_MIN)
 /* Convert a FAT time/date pair to a UNIX date (seconds since 1 1 70). */
@@ -261,15 +273,11 @@ void sdfat_time_fat2unix(struct sdfat_sb_info *sbi, sdfat_timespec_t *ts,
 
 	ts->tv_nsec = 0;
 
-	/* Treat as local time */
-	if (!sbi->options.tz_utc && !tp->Timezone.valid) {
-		ts->tv_sec += sys_tz.tz_minuteswest * SECS_PER_MIN;
+	/* Treat as local time or UTC with time_offset */
+	if (!tp->Timezone.valid) {
+		ts->tv_sec += sdfat_tz_offset(sbi) * SECS_PER_MIN;
 		return;
 	}
-
-	/* Treat as UTC time */
-	if (!tp->Timezone.valid)
-		return;
 
 	/* Treat as UTC time, but need to adjust timezone to UTC0 */
 	if (tp->Timezone.off <= 0x3F)
@@ -290,13 +298,13 @@ void sdfat_time_unix2fat(struct sdfat_sb_info *sbi, sdfat_timespec_t *ts,
 
 	tp->Timezone.value = 0x00;
 
-	/* Treats as local time with proper time */
-	if (tz_valid || !sbi->options.tz_utc) {
-		second -= sys_tz.tz_minuteswest * SECS_PER_MIN;
-		if (tz_valid) {
-			tp->Timezone.valid = 1;
-			tp->Timezone.off = TIMEZONE_CUR_OFFSET();
-		}
+	/* Always set as UTC0 */
+	if (tz_valid) {
+		tp->Timezone.valid = 1;
+		tp->Timezone.off = 0;
+	} else {
+		/* Treats as local time with proper time */
+		second -= sdfat_tz_offset(sbi) * SECS_PER_MIN;
 	}
 
 	/* Jan 1 GMT 00:00:00 1980. But what about another time zone? */
