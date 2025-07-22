@@ -28,6 +28,7 @@
 #include <linux/backing-dev.h>
 #include <linux/string.h>
 #include <linux/msg.h>
+#include <linux/task_integrity.h>
 #include <net/flow.h>
 
 #define MAX_LSM_EVM_XATTR	2
@@ -1296,6 +1297,9 @@ int security_inode_setxattr(struct dentry *dentry, const char *name,
 		ret = cap_inode_setxattr(dentry, name, value, size, flags);
 	if (ret)
 		return ret;
+	ret = five_inode_setxattr(dentry, name, value, size);
+	if (ret)
+		return ret;
 	ret = ima_inode_setxattr(dentry, name, value, size);
 	if (ret)
 		return ret;
@@ -1338,6 +1342,9 @@ int security_inode_removexattr(struct dentry *dentry, const char *name)
 	ret = call_int_hook(inode_removexattr, 1, dentry, name);
 	if (ret == 1)
 		ret = cap_inode_removexattr(dentry, name);
+	if (ret)
+		return ret;
+	ret = five_inode_removexattr(dentry, name);
 	if (ret)
 		return ret;
 	ret = ima_inode_removexattr(dentry, name);
@@ -1541,6 +1548,9 @@ int security_mmap_file(struct file *file, unsigned long prot,
 	ret = call_int_hook(mmap_file, 0, file, prot, prot_adj, flags);
 	if (ret)
 		return ret;
+	ret = five_file_mmap(file, prot);
+	if (ret)
+		return ret;
 	return ima_file_mmap(file, prot, prot_adj, flags);
 }
 
@@ -1594,7 +1604,11 @@ int security_file_open(struct file *file)
 	if (ret)
 		return ret;
 
-	return fsnotify_perm(file, MAY_OPEN);
+	ret = fsnotify_perm(file, MAY_OPEN);
+	if (ret)
+		return ret;
+
+	return five_file_open(file);
 }
 
 int security_task_alloc(struct task_struct *task, unsigned long clone_flags)
@@ -1612,6 +1626,7 @@ int security_task_alloc(struct task_struct *task, unsigned long clone_flags)
 void security_task_free(struct task_struct *task)
 {
 	call_void_hook(task_free, task);
+	five_task_free(task);
 
 	kfree(task->security);
 	task->security = NULL;
@@ -1642,15 +1657,15 @@ void security_cred_free(struct cred *cred)
 	call_void_hook(cred_free, cred);
 
 #ifdef CONFIG_KDP_CRED
+	kdp_free_security((unsigned long)cred->security);
 	if (is_kdp_protect_addr((unsigned long)cred)) {
-		kdp_free_security((unsigned long)cred->security);
 		uh_call(UH_APP_KDP, SELINUX_CRED_FREE, (u64) &cred->security, 0, 0, 0);
 	} else {
-#endif
+		cred->security = NULL;
+	}
+#else
 	kfree(cred->security);
 	cred->security = NULL;
-#ifdef CONFIG_KDP_CRED
-	}
 #endif
 }
 
