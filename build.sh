@@ -101,7 +101,10 @@ SUKI_CHECKOUT_HASH=""    # Specific SUKISU commit SHA
 ENABLE_KSU=0             # Use original KernelSU? (1 = yes, 0 = no)
 KSU_CHECKOUT_HASH=""     # Specific KernelSU commit SHA
 
-
+# KernelSU-Next removed SUSFS branches, so if using KernelSU-Next do not apply susfs patches
+if [[ "$ENABLE_KSU_NEXT" == "1" ]]; then
+    PATCH_SUSFS=0
+fi
 # -------------------------------------- Cloning Functions and setup enviroment ------------------------------------------------------#
 
 # Toybox patch from build-tools gives issues when applying patches with fuzz.
