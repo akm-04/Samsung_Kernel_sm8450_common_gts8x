@@ -17,7 +17,8 @@ echo -e " $yellow #####| To use specific AOSP clang version, edit this script |#
 echo -e " $yellow #####|   and specify correct clang version and install dir  |#####$nocol "
 echo -e " $yellow #####|   Configure PATCH_SUSFS, ENABLE_KSU[_NEXT], etc. at  |########$nocol "
 echo -e " $yellow #####|       top of the script to enable KernelSU patches   |######### $nocol"
-
+echo  # Blank line
+echo  # Blank line
 
 # -------------------------------- | Dependencies |--------------------------------------------------------------#
 # Uncomment Next 4 lines to install all necessary dependencies for kernel Compiling.
@@ -101,10 +102,69 @@ SUKI_CHECKOUT_HASH=""    # Specific SUKISU commit SHA
 ENABLE_KSU=0             # Use original KernelSU? (1 = yes, 0 = no)
 KSU_CHECKOUT_HASH=""     # Specific KernelSU commit SHA
 
+# --------------------- Variable verification and corrections -------------------------------------#
+
+# --- ensure only one KernelSU variant is enabled ---
+count=0
+enabled_list=""
+
+if [[ "$ENABLE_KSU" == "1" ]]; then
+    count=$((count + 1))
+    enabled_list="${enabled_list}KernelSU, "
+fi
+
+if [[ "$ENABLE_SUKISU" == "1" ]]; then
+    count=$((count + 1))
+    enabled_list="${enabled_list}SUKISU, "
+fi
+
+if [[ "$ENABLE_KSU_NEXT" == "1" ]]; then
+    count=$((count + 1))
+    enabled_list="${enabled_list}KernelSU-Next, "
+fi
+
+if [[ $count -gt 1 ]]; then
+    # trim trailing ", "
+    enabled_list=${enabled_list%??}
+    echo -e "${red}Error:${nocol} Only one KernelSU variant may be enabled. You enabled: ${yellow}${enabled_list}${nocol}" >&2
+    exit 1
+fi
+
+# ------------- ensure all assigned values are either 1 or 0 ---
+
+if [[ "$ENABLE_KSU_NEXT" != "1" && "$ENABLE_KSU_NEXT" != "0" ]]; then
+    echo -e "${yellow}Invalid ENABLE_KSU_NEXT variable value; defaulting to 0${nocol}" >&2
+    ENABLE_KSU_NEXT=0
+fi
+
+if [[ "$ENABLE_SUKISU" != "1" && "$ENABLE_SUKISU" != "0" ]]; then
+    echo -e "${yellow}Invalid ENABLE_SUKISU variable value; defaulting to 0${nocol}" >&2
+    ENABLE_SUKISU=0
+fi
+
+if [[ "$ENABLE_KSU" != "1" && "$ENABLE_KSU" != "0" ]]; then
+    echo -e "${yellow}Invalid ENABLE_KSU variable value; defaulting to 0${nocol}" >&2
+    ENABLE_KSU=0
+fi
+
+if [[ "$PATCH_SUSFS" != "1" && "$PATCH_SUSFS" != "0" ]]; then
+    echo -e "${yellow}Invalid PATCH_SUSFS variable value; defaulting to 0${nocol}" >&2
+    PATCH_SUSFS=0
+fi
+
 # KernelSU-Next removed SUSFS branches, so if using KernelSU-Next do not apply susfs patches
 if [[ "$ENABLE_KSU_NEXT" == "1" ]]; then
     PATCH_SUSFS=0
 fi
+# SUKISU normal version without susfs does not support manual hooks
+if [[ "$ENABLE_SUKISU" == "1" && "$PATCH_SUSFS" == "0" ]]; then
+    SUKI_MANUAL_HOOKS=0
+fi
+# If no KSU variant is enabled, never apply SUSFS
+if [[ "$ENABLE_KSU_NEXT" == "0" && "$ENABLE_SUKISU" == "0" && "$ENABLE_KSU" == "0" ]]; then
+    PATCH_SUSFS=0
+fi
+
 # -------------------------------------- Cloning Functions and setup enviroment ------------------------------------------------------#
 
 # Toybox patch from build-tools gives issues when applying patches with fuzz.
