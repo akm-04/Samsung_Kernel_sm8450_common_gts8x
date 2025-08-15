@@ -95,7 +95,8 @@ KSUN_CHECKOUT_HASH=""    # Specific KernelSU-Next commit SHA
 
 ## SUKISU-Ultra Options
 ENABLE_SUKISU=1          # Use SUKISU-Ultra? (1 = yes, 0 = no)
-SUKI_MANUAL_HOOKS=1      # Hooks style for SUKISU (1 = manual, 0 = default)
+SUKI_MANUAL_HOOKS=0      # Manual Hooks for SUKISU (SUSFS version only) (1 = manual, 0 = default)
+SUKI_TRACEPOINTS_HOOK=1  # Use tracepoint hook for Sukisu-Ultra (for SUSFS and Normal ver) (1 = enable, 0 = disabled)
 SUKI_CHECKOUT_HASH=""    # Specific SUKISU commit SHA
 
 ## KernelSU Options     | Note KernelSU-Next removed SUSFS support from their branch
@@ -156,9 +157,17 @@ fi
 if [[ "$ENABLE_KSU_NEXT" == "1" ]]; then
     PATCH_SUSFS=0
 fi
+# Only one type of Hook variant maybe selected
+if [[ "$SUKI_MANUAL_HOOKS" == "1" && "$SUKI_TRACEPOINTS_HOOK" == "1" ]]; then
+    echo -e "${red}Error:${nocol} Only one type of SUKISU Hook variant may be applied! You enabled both SUKISU Manual Hook and Tracepoint Hook."
+    exit 1
+fi
 # SUKISU normal version without susfs does not support manual hooks
 if [[ "$ENABLE_SUKISU" == "1" && "$PATCH_SUSFS" == "0" ]]; then
-    SUKI_MANUAL_HOOKS=0
+    if [[ "$SUKI_MANUAL_HOOKS" == "1" ]]; then
+        echo -e "${blue}Note:${nocol} SUKISU normal (no SUSFS) does not support manual hooks — disabling SUKI_MANUAL_HOOKS."
+        SUKI_MANUAL_HOOKS=0
+    fi
 fi
 # If no KSU variant is enabled, never apply SUSFS
 if [[ "$ENABLE_KSU_NEXT" == "0" && "$ENABLE_SUKISU" == "0" && "$ENABLE_KSU" == "0" ]]; then
@@ -369,7 +378,7 @@ clean_kernel() {
     # Only remove SUSFS sources if we’re patching SUSFS
     if [ "${PATCH_SUSFS:-0}" -eq 1 ]; then
         echo -e "$yellow**** Removing SUSFS folder/patch ****$nocol"
-        rm -rf susfs4ksu 50_add_susfs_in_gki-5.15*.patch
+        rm -rf susfs4ksu 50_add_susfs_in_gki-android12-5.10.patch
     fi
 
     # Only remove KSU trees if any KSU variant is enabled
@@ -882,6 +891,35 @@ Enable_SUKISU-ultra() {
                 fi
             else
                 echo -e "${red}ERROR: SUKISU Manual Hook Patch did not apply cleanly. Aborting.${nocol}"
+                exit 1
+            fi
+        fi
+        if [[ "$SUKI_TRACEPOINTS_HOOK" == "1" ]]; then
+            log_section "Started Applying SUKISU Tracepoint Hook Patches "
+            if ! cp sukisu_tracepoint_hooks.diff sukisu_tracepoint_hooks.patch; then
+                echo -e "${red}Tracepoint hook patch not found in $KERNELDIR ! Aborting.${nocol}"
+                exit 1
+            fi
+            if patch -p1 < sukisu_tracepoint_hooks.patch; then
+                echo -e "${green}SUKISU Tracepoint Hook Patch applied successfully.${nocol}"
+                rm -f sukisu_tracepoint_hooks.patch
+                echo -e "${blue}Making necessary defconfig changes .... …${nocol}"
+                ./scripts/config \
+                    --file "arch/${ARCH}/configs/${KERNEL_DEFCONFIG}" \
+                    --enable KSU_TRACEPOINT_HOOK
+                ./scripts/config \
+                    --file "arch/${ARCH}/configs/${KERNEL_DEFCONFIG}" \
+                    --disable KSU_DEBUG
+                if [[ "$PATCH_SUSFS" == "1" ]]; then
+                    ./scripts/config \
+                        --file "arch/${ARCH}/configs/${KERNEL_DEFCONFIG}" \
+                        --disable KSU_SUSFS_SUS_SU
+                    ./scripts/config \
+                        --file "arch/${ARCH}/configs/${KERNEL_DEFCONFIG}" \
+                        --disable KSU_SUSFS_ENABLE_LOG
+                fi
+            else
+                echo -e "${red}ERROR: SUKISU Tracepoint Hook Patch did not apply cleanly. Aborting.${nocol}"
                 exit 1
             fi
         fi
