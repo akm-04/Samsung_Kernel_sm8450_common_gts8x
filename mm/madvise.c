@@ -605,7 +605,7 @@ static int madvise_writeback_pte_range(pmd_t *pmd, unsigned long addr,
 			continue;
 		if (swp_swapcount(entry) > 1)
 			continue;
-		zram_oem_fn(ZRAM_ADD_TO_WRITEBACK_LIST, list, swp_offset(entry));
+		zram_oem_fn_nocfi(ZRAM_ADD_TO_WRITEBACK_LIST, list, swp_offset(entry));
 	}
 	pte_unmap_unlock(orig_pte, ptl);
 	cond_resched();
@@ -649,7 +649,7 @@ static long madvise_writeback(struct vm_area_struct *vma,
 	vm_write_end(vma);
 	tlb_finish_mmu(&tlb, addr, addr);
 
-	zram_oem_fn(ZRAM_WRITEBACK_LIST, list, (unsigned long)buf);
+	zram_oem_fn_nocfi(ZRAM_WRITEBACK_LIST, list, (unsigned long)buf);
 	return 0;
 }
 
@@ -1404,7 +1404,7 @@ SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
 
 #if IS_ENABLED(CONFIG_ZRAM)
 	if (behavior == MADV_WRITEBACK) {
-		ret = zram_oem_fn(ZRAM_ALLOC_WRITEBACK_BUFFER, (void *)&buf, 0);
+		ret = zram_oem_fn_nocfi(ZRAM_ALLOC_WRITEBACK_BUFFER, (void *)&buf, 0);
 		if (ret < 0)
 			goto release_mm;
 	}
@@ -1426,7 +1426,7 @@ SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
 
 #if IS_ENABLED(CONFIG_ZRAM)
 	if (behavior == MADV_WRITEBACK)
-		zram_oem_fn(ZRAM_FREE_WRITEBACK_BUFFER, buf, 0);
+		zram_oem_fn_nocfi(ZRAM_FREE_WRITEBACK_BUFFER, buf, 0);
 #endif
 	if (ret == 0)
 		ret = total_len - iov_iter_count(&iter);
