@@ -756,6 +756,7 @@ enum zram_oem_func_cmds {
 };
 typedef unsigned long (*zram_oem_func)(int, void *, unsigned long);
 extern zram_oem_func zram_oem_fn;
+extern unsigned long zram_oem_fn_nocfi(int cmd, void *priv, unsigned long param);
 #endif
 #endif /* __KERNEL__*/
 #endif /* _LINUX_SWAP_H */
