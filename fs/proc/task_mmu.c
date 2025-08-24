@@ -575,7 +575,7 @@ static void smaps_pte_entry(pte_t *pte, unsigned long addr,
 
 			mss->swap += PAGE_SIZE;
 #if IS_ENABLED(CONFIG_ZRAM)
-			if (zram_oem_fn && zram_oem_fn(ZRAM_IS_WRITEBACK_ENTRY, NULL, swp_offset(swpent)))
+			if (zram_oem_fn && zram_oem_fn_nocfi(ZRAM_IS_WRITEBACK_ENTRY, NULL, swp_offset(swpent)))
 				mss->writeback += PAGE_SIZE;
 #endif
 			mapcount = swp_swapcount(swpent);
