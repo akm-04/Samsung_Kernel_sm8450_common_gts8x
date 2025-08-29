@@ -28,6 +28,9 @@
 #include "helper.h"
 #include "pcm.h"
 #include "usb_audio_qmi_v01.h"
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+#include <linux/usb_notify.h>
+#endif
 
 #define BUS_INTERVAL_FULL_SPEED 1000 /* in us */
 #define BUS_INTERVAL_HIGHSPEED_AND_ABOVE 125 /* in us */
@@ -1096,6 +1099,9 @@ static void handle_uaudio_stream_req(struct qmi_handle *handle,
 
 	u8 pcm_card_num, pcm_dev_num, direction;
 	int info_idx = -EINVAL, datainterval = -EINVAL, ret = 0;
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+	int on, type;
+#endif	
 
 	uaudio_dbg("sq_node:%x sq_port:%x sq_family:%x\n", sq->sq_node,
 			sq->sq_port, sq->sq_family);
@@ -1144,6 +1150,7 @@ static void handle_uaudio_stream_req(struct qmi_handle *handle,
 	}
 
 	mutex_lock(&chip->dev_lock);
+	pr_info("%s : inside mutex\n", __func__);
 	info_idx = info_idx_from_ifnum(pcm_card_num, subs->interface,
 		req_msg->enable);
 	if (atomic_read(&chip->shutdown) || !subs->stream || !subs->stream->pcm
@@ -1206,16 +1213,27 @@ static void handle_uaudio_stream_req(struct qmi_handle *handle,
 			info->sync_ep_pipe = 0;
 		}
 	}
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+	if (subs->direction == SNDRV_PCM_STREAM_PLAYBACK)
+		type = NOTIFY_PCM_PLAYBACK;
+	else
+		type = NOTIFY_PCM_CAPTURE;
+	on = req_msg->enable;
+	store_usblog_notify(type, (void *)&on, NULL);
+#endif
 
 	pm_runtime_barrier(&chip->intf[0]->dev);
 	ret = snd_usb_enable_audio_stream(subs, datainterval, req_msg->enable);
+	pr_info("%s : snd_usb_enable_audio_stream : ret = %d\n", __func__, ret);
 
 	if (!ret && req_msg->enable)
 		ret = prepare_qmi_response(subs, req_msg, &resp, info_idx);
 
+	pr_info("%s : prepare_qmi_response : ret = %d\n", __func__, ret);
 	mutex_unlock(&chip->dev_lock);
 
 response:
+	pr_info("%s : response : ret = %d\n", __func__, ret);
 	if (!req_msg->enable && ret != -EINVAL && ret != -ENODEV) {
 		mutex_lock(&chip->dev_lock);
 		if (info_idx >= 0) {
@@ -1253,6 +1271,9 @@ static void uaudio_qmi_disconnect_work(struct work_struct *w)
 	int idx, if_idx;
 	struct snd_usb_substream *subs;
 	struct snd_usb_audio *chip = NULL;
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+	int on, type;
+#endif		
 
 	/* find all active intf for set alt 0 and cleanup usb audio dev */
 	for (idx = 0; idx < SNDRV_CARDS; idx++) {
@@ -1275,6 +1296,14 @@ static void uaudio_qmi_disconnect_work(struct work_struct *w)
 						info->direction);
 				continue;
 			}
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+			if (subs->direction == SNDRV_PCM_STREAM_PLAYBACK)
+				type = NOTIFY_PCM_PLAYBACK;
+			else
+				type = NOTIFY_PCM_CAPTURE;
+			on = 0;
+			store_usblog_notify(type, (void *)&on, NULL);
+#endif			
 			snd_usb_enable_audio_stream(subs, -EINVAL, 0);
 		}
 		atomic_set(&uadev[idx].in_use, 0);
