@@ -199,6 +199,7 @@ static ssize_t memtype_sysfs_show(struct kobject *kobj,
 		spin_lock(&priv->mem_lock);
 	}
 	spin_unlock(&priv->mem_lock);
+	
 
 	queue_work(kgsl_driver.lockless_workqueue, &work->work);
 
@@ -224,9 +225,11 @@ imported_mem_show(struct kgsl_process_private *priv,
 	struct deferred_work *work = kzalloc(sizeof(struct deferred_work),
 		GFP_KERNEL);
 
+ 
 	if (!work)
 		return -ENOMEM;
 
+ 
 	/*
 	 * Take a process refcount here and put it back in a deferred manner.
 	 * This is to avoid a deadlock where we put back last reference of the
@@ -238,10 +241,10 @@ imported_mem_show(struct kgsl_process_private *priv,
 		kfree(work);
 		return -ENOENT;
 	}
-
+ 
 	work->private = priv;
 	INIT_WORK(&work->work, process_private_deferred_put);
-
+  
 	spin_lock(&priv->mem_lock);
 	for (entry = idr_get_next(&priv->mem_idr, &id); entry;
 		id++, entry = idr_get_next(&priv->mem_idr, &id)) {
@@ -274,6 +277,7 @@ imported_mem_show(struct kgsl_process_private *priv,
 		spin_lock(&priv->mem_lock);
 	}
 	spin_unlock(&priv->mem_lock);
+	
 
 	queue_work(kgsl_driver.lockless_workqueue, &work->work);
 

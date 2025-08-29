@@ -9,6 +9,9 @@
 #include <linux/slab.h>
 #include <linux/cpu.h>
 #include <linux/device.h>
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+#include <linux/sec_pm_log.h>
+#endif
 
 #define CPU_HOTPLUG_LEVEL 1
 
@@ -152,8 +155,12 @@ static void cpu_hot_execute_cdev(struct work_struct *work)
 		mutex_lock(&cpu_hot_lock);
 		if (ret < 0)
 			pr_err("CPU:%d offline error:%d\n", cpu, ret);
-		else
+		else {
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+			ss_thermal_print("offline cpu%d\n", cpu);
+#endif
 			cpu_hot_cdev->cpu_cur_state = false;
+		}
 	} else {
 		if (cpu_hot_cdev->cpu_cur_state)
 			goto unlock_exit;
@@ -162,8 +169,12 @@ static void cpu_hot_execute_cdev(struct work_struct *work)
 		mutex_lock(&cpu_hot_lock);
 		if (ret)
 			pr_err("CPU:%d online error:%d\n", cpu, ret);
-		else
+		else {
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+			ss_thermal_print("online cpu%d\n", cpu);
+#endif
 			cpu_hot_cdev->cpu_cur_state = true;
+		}
 	}
 unlock_exit:
 	mutex_unlock(&cpu_hot_lock);

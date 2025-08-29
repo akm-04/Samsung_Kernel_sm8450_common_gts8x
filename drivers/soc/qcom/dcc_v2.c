@@ -1940,6 +1940,9 @@ static int dcc_dt_parse(struct dcc_drvdata *drvdata, struct device_node *np)
 		}
 	}
 
+	drvdata->qad_output[curr_link_list] =
+			!!of_property_read_bool(np, "qcom,ap_ns_qad_override_en");
+
 	prop = of_get_property(np, "qcom,link-list", &len);
 	if (prop) {
 		len /= sizeof(__be32);

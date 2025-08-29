@@ -57,6 +57,7 @@
 #include <trace/hooks/gpiolib.h>
 #include <trace/hooks/signal.h>
 #include <trace/hooks/logbuf.h>
+#include <trace/hooks/net.h>
 #include <trace/hooks/vmscan.h>
 #include <trace/hooks/psi.h>
 #include <trace/hooks/hung_task.h>
@@ -77,6 +78,7 @@
 #include <trace/hooks/ipv4.h>
 #include <trace/hooks/pci.h>
 #include <trace/hooks/dmabuf.h>
+#include <trace/hooks/mz.h>
 #include <trace/hooks/wakeupbypass.h>
 #include <trace/hooks/fuse.h>
 
@@ -328,6 +330,12 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_typec_tcpm_get_timer);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_typec_tcpm_adj_current_limit);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_logbuf);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_logbuf_pr_cont);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_ptype_head);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_kfree_skb);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_sk_alloc);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_sk_free);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_nf_conn_alloc);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_nf_conn_free);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_tune_scan_type);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_tune_swappiness);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_shrink_slab_bypass);
@@ -566,3 +574,4 @@ EXPORT_SYMBOL_GPL(GKI_struct_gic_chip_data);
 #include <linux/swap_slots.h>
 const struct swap_slots_cache *GKI_struct_swap_slots_cache;
 EXPORT_SYMBOL_GPL(GKI_struct_swap_slots_cache);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_mz_exit);

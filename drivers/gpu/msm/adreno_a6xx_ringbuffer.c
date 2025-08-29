@@ -107,6 +107,15 @@ static int a6xx_rb_context_switch(struct adreno_device *adreno_dev,
 	cmds[count++] = cp_type7_packet(CP_EVENT_WRITE, 1);
 	cmds[count++] = 0x31;
 
+	if (adreno_is_preemption_enabled(adreno_dev)) {
+		u64 gpuaddr = drawctxt->base.user_ctxt_record->memdesc.gpuaddr;
+		
+		cmds[count++] = cp_type7_packet(CP_SET_PSEUDO_REGISTER, 3);
+		cmds[count++] = SET_PSEUDO_NON_PRIV_SAVE_ADDR;
+		count += cp_gpuaddr(adreno_dev, &cmds[count], gpuaddr);
+		
+	}
+
 	return a6xx_ringbuffer_addcmds(adreno_dev, rb, NULL, F_NOTPROTECTED,
 			cmds, count, 0, NULL);
 }

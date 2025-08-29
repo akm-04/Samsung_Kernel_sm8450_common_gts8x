@@ -3153,6 +3153,8 @@ int device_add(struct device *dev)
 	int error = -EINVAL;
 	struct kobject *glue_dir = NULL;
 
+	int ret = 0;
+
 	dev = get_device(dev);
 	if (!dev)
 		goto done;
@@ -3247,7 +3249,9 @@ int device_add(struct device *dev)
 		blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
 					     BUS_NOTIFY_ADD_DEVICE, dev);
 
-	kobject_uevent(&dev->kobj, KOBJ_ADD);
+	ret = kobject_uevent(&dev->kobj, KOBJ_ADD);
+	if (!strncmp(dev_name(dev), "remoteproc", strlen("remoteproc")))
+		pr_err("[%s] dev : %s add ret : %d\n", __func__, dev_name(dev), ret);
 
 	/*
 	 * Check if any of the other devices (consumers) have been waiting for

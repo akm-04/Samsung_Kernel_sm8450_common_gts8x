@@ -1140,6 +1140,10 @@ static int kgsl_iommu_fault_handler(struct kgsl_mmu *mmu,
 		context);
 	kgsl_iommu_add_fault_info(context, addr, flags);
 
+#if IS_ENABLED(CONFIG_SEC_ABC)
+	sec_abc_send_event("MODULE=gpu_qc@WARN=gpu_page_fault");
+#endif 
+
 	if (stall) {
 		struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 		u32 sctlr;
@@ -1317,7 +1321,7 @@ static void kgsl_iommu_destroy_default_pagetable(struct kgsl_pagetable *pagetabl
 static void kgsl_iommu_destroy_pagetable(struct kgsl_pagetable *pagetable)
 {
 	struct kgsl_iommu_pt *pt = to_iommu_pt(pagetable);
-
+	
 	qcom_free_io_pgtable_ops(pt->pgtbl_ops);
 	kfree(pt);
 }

@@ -2208,7 +2208,7 @@ int kgsl_pwrctrl_change_state(struct kgsl_device *device, int state)
 	return status;
 }
 
-void kgsl_pwrctrl_set_state(struct kgsl_device *device,
+void kgsl_pwrctrl_set_state(struct kgsl_device* device,
 				unsigned int state)
 {
 	trace_kgsl_pwr_set_state(device, state);

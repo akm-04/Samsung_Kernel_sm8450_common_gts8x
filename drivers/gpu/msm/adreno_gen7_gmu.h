@@ -284,6 +284,12 @@ int gen7_gmu_memory_init(struct adreno_device *adreno_dev);
 void gen7_gmu_aop_send_acd_state(struct gen7_gmu_device *gmu, bool flag);
 
 /**
+ * gen7_gmu_disable_gdsc - Disable gmu gdsc
+ * @adreno_dev: Pointer to the adreno device
+ */
+void gen7_gmu_disable_gdsc(struct adreno_device *adreno_dev);
+
+/**
  * gen7_gmu_load_fw - Load gmu firmware
  * @adreno_dev: Pointer to the adreno device
  *

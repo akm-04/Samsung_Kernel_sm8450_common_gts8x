@@ -325,7 +325,7 @@ static int spec_sync_bind_array(struct fence_bind_data *sync_bind_info)
 		}
 		fence_array->fences[i] = user_fence;
 		pr_debug("spec fd:%d i:%d bind fd:%d error:%d\n", sync_bind_info->out_bind_fd,
-			 i, user_fds[i], fence_array->fences[i]->error);
+			i, user_fds[i], fence_array->fences[i]->error);
 	}
 
 	set_bit(SPEC_FENCE_FLAG_ARRAY_BIND, &fence->flags);

@@ -22,18 +22,36 @@
 #include <linux/workqueue.h>
 
 #include <linux/remoteproc.h>
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+#include <linux/adsp/ssc_ssr_reason.h>
+#endif
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+#include <linux/adsp/ssc_spu.h>
+#endif
 
 #define IMAGE_LOAD_CMD 1
 #define IMAGE_UNLOAD_CMD 0
 #define SSR_RESET_CMD 1
+#define SSR_LOAD_SPU 8
+#define SSR_FORCE_RESET_CMD 9
 #define CLASS_NAME	"ssc"
 #define DRV_NAME	"sensors"
 #define DRV_VERSION	"2.00"
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+#define SPU_FIRMWARE	"slpi_spu.mdt"
+#endif
 #ifdef CONFIG_COMPAT
 #define DSPS_IOCTL_READ_SLOW_TIMER32	_IOR(DSPS_IOCTL_MAGIC, 3, compat_uint_t)
 #endif
 
 #define QTICK_DIV_FACTOR	0x249F
+
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+#define SPU_FW_UPDATE_CMD	4
+#define SPU_FW_UPDATE_CMD_SIZE	9
+#define SPU_SUFFIX_SIZE		2
+#define SPU_SUFFIX_IDX		12
+#endif
 
 struct sns_ssc_control_s {
 	struct class *dev_class;
@@ -51,6 +69,15 @@ static ssize_t slpi_ssr_store(struct kobject *kobj,
 	struct kobj_attribute *attr,
 	const char *buf, size_t count);
 
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+static ssize_t slpi_cmd_store(struct kobject *kobj,
+	struct kobj_attribute *attr,
+	const char *buf, size_t count);
+
+static ssize_t slpi_cmd_result_show(struct kobject *kobj,
+	struct kobj_attribute *attr, char *buf);
+#endif
+
 struct slpi_loader_private {
 	void *pil_h;
 	struct kobject *boot_slpi_obj;
@@ -63,14 +90,30 @@ static struct kobj_attribute slpi_boot_attribute =
 static struct kobj_attribute slpi_ssr_attribute =
 	__ATTR(ssr, 0220, NULL, slpi_ssr_store);
 
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+static struct kobj_attribute slpi_cmd_attribute =
+	__ATTR(cmd, 0220, NULL, slpi_cmd_store);
+
+static struct kobj_attribute slpi_cmd_result_attribute =
+	__ATTR(cmd_result, 0440, slpi_cmd_result_show, NULL);
+#endif
+
 static struct attribute *attrs[] = {
 	&slpi_boot_attribute.attr,
 	&slpi_ssr_attribute.attr,
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+	&slpi_cmd_attribute.attr,
+	&slpi_cmd_result_attribute.attr,
+#endif
 	NULL,
 };
 
 static struct platform_device *slpi_private;
 static struct work_struct slpi_ldr_work;
+
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+static bool spu_update = false;
+#endif
 
 static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 {
@@ -125,7 +168,19 @@ static void slpi_load_fw(struct work_struct *slpi_ldr_work)
 			}
 		}
 	}
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+	if (spu_update) {
+		struct rproc *sns_dev = (struct rproc *)priv->pil_h;
+		char *p;
 
+		p = kstrndup((const char *)SPU_FIRMWARE, strlen(SPU_FIRMWARE), GFP_KERNEL);
+		if (!p)
+			goto fail;
+		kfree(sns_dev->firmware);
+		sns_dev->firmware = p;
+		dev_dbg(&pdev->dev, "%s: SLPI image to SPU, %s\n", __func__, sns_dev->firmware);
+	}
+#endif
 	ret = rproc_boot(priv->pil_h);
 	if (ret) {
 		dev_err(&pdev->dev, "%s: rproc boot failed, err: %d\n",
@@ -162,6 +217,56 @@ static void slpi_loader_unload(struct platform_device *pdev)
 	}
 }
 
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+extern void ssc_set_fw_idx(int src);
+
+char cmd_result_buf[20] = {"fw_update,4:NG"};
+static ssize_t slpi_cmd_store(struct kobject *kobj,
+	struct kobj_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	struct rproc *sns_dev = NULL;
+	struct platform_device *pdev = slpi_private;
+	struct slpi_loader_private *priv = NULL;
+	char cmd_buf[15] = {0, };
+	int nval = 0, cmd = 0;
+
+	nval = sscanf(buf, "%9s,%d", cmd_buf, &cmd);
+	pr_info("%s: buf:%s, cmd:%d,%d\n", __func__, cmd_buf, cmd, nval);
+
+	if (!strncmp(cmd_buf, "fw_update", SPU_FW_UPDATE_CMD_SIZE)
+		&& cmd == SPU_FW_UPDATE_CMD) {
+		spu_update = true;
+
+		priv = platform_get_drvdata(pdev);
+		if (!priv) {
+			pr_err("%s: priv null.\n", __func__);
+			return count;
+		}
+
+		sns_dev = (struct rproc *)priv->pil_h;
+		if (!sns_dev) {
+			pr_err("%s: sns_dev null.\n", __func__);
+			return count;
+		}
+		
+		rproc_shutdown(sns_dev);
+		slpi_loader_do(pdev);
+		spu_update = false;
+		cmd_result_buf[SPU_SUFFIX_IDX] = 'O';
+		cmd_result_buf[SPU_SUFFIX_IDX + 1] = 'K';
+	}
+	return count;
+}
+
+static ssize_t slpi_cmd_result_show(struct kobject *kobj,
+	struct kobj_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%s\n", cmd_result_buf);
+}
+#endif
+
 static ssize_t slpi_ssr_store(struct kobject *kobj,
 	struct kobj_attribute *attr,
 	const char *buf,
@@ -171,13 +276,24 @@ static ssize_t slpi_ssr_store(struct kobject *kobj,
 	struct rproc *sns_dev = NULL;
 	struct platform_device *pdev = slpi_private;
 	struct slpi_loader_private *priv = NULL;
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+	char msg[50] = "Something went wrong with SLPI, restarting";
+	bool prev_recovery = false;
+#endif
 
 	pr_debug("%s: going to call slpi_ssr\n", __func__);
 
 	if (kstrtoint(buf, 10, &ssr_cmd) < 0)
 		return -EINVAL;
 
-	if (ssr_cmd != SSR_RESET_CMD)
+	if (ssr_cmd != SSR_RESET_CMD
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+		&& ssr_cmd != SSR_LOAD_SPU
+#endif
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+		&& ssr_cmd != SSR_FORCE_RESET_CMD
+#endif
+	)
 		return -EINVAL;
 
 	priv = platform_get_drvdata(pdev);
@@ -189,10 +305,40 @@ static ssize_t slpi_ssr_store(struct kobject *kobj,
 		return -EINVAL;
 
 	dev_err(&pdev->dev, "requesting for SLPI restart\n");
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+	ssr_reason_call_back(msg, strlen(msg) + 1);
+#endif
+
+#if IS_ENABLED(CONFIG_SUPPORT_SSC_SPU)
+	if (ssr_cmd == SSR_LOAD_SPU) {
+		pr_info("Upload SPU firm, cmd:%d, %d\n",
+			ssr_cmd, (int)spu_update);
+		if (spu_update)
+			return count;
+		spu_update = true;
+		sns_dev->recovery_disabled = false;
+		ssc_set_fw_idx(SSC_SPU);
+	}
+#endif
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+	if (ssr_cmd == SSR_FORCE_RESET_CMD) {
+		dev_dbg(&pdev->dev, "SLPI force SSR from Hal\n");
+		prev_recovery = sns_dev->recovery_disabled;
+		sns_dev->recovery_disabled = false;
+	}
+#endif
+	if (sns_dev->recovery_disabled) {
+		sns_dev->state = RPROC_CRASHED;
+		panic("Panicking, remoterpoc %s crashed\n", sns_dev->name);
+	}
 
 	rproc_shutdown(sns_dev);
 	slpi_loader_do(pdev);
 
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+	if (ssr_cmd == SSR_FORCE_RESET_CMD)
+		sns_dev->recovery_disabled = prev_recovery;
+#endif
 	dev_dbg(&pdev->dev, "SLPI restarted\n");
 	return count;
 }
@@ -494,3 +640,4 @@ module_init(sensors_ssc_init);
 module_exit(sensors_ssc_exit);
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Sensors SSC driver");
+MODULE_SOFTDEP("pre: qcom_q6v5_pas");

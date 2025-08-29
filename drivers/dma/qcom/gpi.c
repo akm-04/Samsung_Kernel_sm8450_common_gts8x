@@ -806,15 +806,6 @@ static void gpi_dump_debug_reg(struct gpii *gpii)
 			       (void *)gpi_debug_regs, sizeof(gpi_debug_regs));
 		}
 
-		/* log debug register */
-		reg_info = dbg_reg_table->gpi_debug_regs;
-		for (; reg_info->name; reg_info++) {
-			reg_info->val = readl_relaxed(gpii->gpi_dev->regs +
-						reg_info->offset);
-			GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_dbg Reg:%s addr:0x%x->val:0x%x\n",
-				 reg_info->name, reg_info->offset, reg_info->val);
-		}
-
 		if (!dbg_reg_table->gpi_debug_qsb_regs) {
 			dbg_reg_table->gpi_debug_qsb_regs =
 				kzalloc(sizeof(gpi_debug_qsb_regs), gfp);

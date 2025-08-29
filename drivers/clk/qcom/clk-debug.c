@@ -845,6 +845,9 @@ static int clock_debug_print_clock(struct hw_debug_clk *dclk, struct seq_file *s
 				clk_rate);
 		}
 
+		if (clk_hw_get_num_parents(clk_hw) == 0)
+			break;
+
 		if (atomic)
 			break;
 
@@ -942,7 +945,6 @@ static void clk_debug_suspend_trace_probe(void *unused,
 					const char *action, int val, bool start)
 {
 	if (start && val > 0 && !strcmp("machine_suspend", action)) {
-		pr_info("Enabled Clocks:\n");
 		clock_debug_print_enabled_clocks(NULL);
 	}
 }
@@ -1052,6 +1054,20 @@ int clk_debug_init(void)
 {
 	static struct dentry *rootdir;
 	int ret = 0;
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+	ret = register_trace_suspend_resume(
+		clk_debug_suspend_trace_probe, NULL);
+	if (ret) {
+		pr_err("%s: Failed to register suspend trace callback, ret=%d\n",
+			__func__, ret);
+		return ret;
+	}
+	else {
+		debug_suspend = true;
+		debug_suspend_atomic = true;
+	}
+#endif
 
 	rootdir = debugfs_lookup("clk", NULL);
 	if (IS_ERR_OR_NULL(rootdir)) {

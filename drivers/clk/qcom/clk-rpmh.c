@@ -11,6 +11,7 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
+#include <linux/clk.h>
 #include <soc/qcom/cmd-db.h>
 #include <soc/qcom/rpmh.h>
 #include <soc/qcom/tcs.h>
@@ -727,6 +728,36 @@ static struct clk_hw *of_clk_rpmh_hw_get(struct of_phandle_args *clkspec,
 	return rpmh->clks[idx];
 }
 
+static ssize_t show_xo_vote(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return 0;
+}
+
+static ssize_t store_xo_vote(struct device *dev,
+			     struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	const struct clk_rpmh_desc *desc;
+	struct clk *clk;
+	int ret;
+
+	desc = of_device_get_match_data(dev);
+	if (!desc) {
+		pr_err("%s: no match data\n", __func__);
+		return 0;
+	}
+
+	pr_err("%s: voting for bi_tcxo\n", __func__);
+
+	clk = desc->clks[RPMH_CXO_CLK]->clk;
+	ret = clk_prepare_enable(clk);
+
+	return !ret ? count : ret;
+}
+
+static DEVICE_ATTR(xo_vote, 0644, show_xo_vote, store_xo_vote);
+
 static int clk_rpmh_probe(struct platform_device *pdev)
 {
 	struct clk_hw **hw_clks;
@@ -790,6 +821,8 @@ static int clk_rpmh_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to add clock provider\n");
 		return ret;
 	}
+
+	device_create_file(&pdev->dev, &dev_attr_xo_vote);
 
 	dev_dbg(&pdev->dev, "Registered RPMh clocks\n");
 

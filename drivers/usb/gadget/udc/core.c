@@ -1512,7 +1512,7 @@ static int udc_bind_to_driver(struct usb_udc *udc, struct usb_gadget_driver *dri
 {
 	int ret;
 
-	dev_dbg(&udc->dev, "registering UDC driver [%s]\n",
+	dev_err(&udc->dev, "registering UDC driver [%s]\n",
 			driver->function);
 
 	udc->driver = driver;
@@ -1521,8 +1521,11 @@ static int udc_bind_to_driver(struct usb_udc *udc, struct usb_gadget_driver *dri
 	usb_gadget_udc_set_speed(udc, driver->max_speed);
 
 	ret = driver->bind(udc->gadget, driver);
-	if (ret)
+	if (ret) {
+		dev_err(&udc->dev, "driver->bind fail - ret: %d\n",
+			ret);
 		goto err1;
+	}
 	ret = usb_gadget_udc_start(udc);
 	if (ret)
 		goto err_start;

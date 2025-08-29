@@ -211,6 +211,11 @@ bool has_system_slept(void)
 	bool sleep_flag = true;
 
 	for (i = 0; i < ARRAY_SIZE(system_stats); i++) {
+#if IS_ENABLED(CONFIG_SEC_PM)
+		/* Note: aosd, ddr is not our concern */
+		if ((strcmp("cxsd", system_stats[i].name)))
+			continue;
+#endif
 		if (b_system_stats[i].count == a_system_stats[i].count) {
 			pr_warn("System %s has not entered sleep\n", system_stats[i].name);
 			sleep_flag = false;

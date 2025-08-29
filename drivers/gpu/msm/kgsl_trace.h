@@ -20,6 +20,10 @@
 #include "kgsl_drawobj.h"
 #include "kgsl_sharedmem.h"
 
+#if IS_ENABLED(CONFIG_SEC_ABC)
+#include <linux/sti/abc_common.h>
+#endif
+
 #define show_memtype(type) \
 	__print_symbolic(type, \
 		{ KGSL_MEM_ENTRY_KERNEL, "gpumem" }, \
