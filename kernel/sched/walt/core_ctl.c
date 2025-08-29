@@ -15,6 +15,7 @@
 #include <linux/syscore_ops.h>
 #include <uapi/linux/sched/types.h>
 #include <linux/sched/walt.h>
+#include <linux/cpufreq.h>
 
 #include "walt.h"
 #include "trace.h"
@@ -38,6 +39,7 @@ struct cluster_data {
 	unsigned int		max_nr;
 	unsigned int		nr_prev_assist;
 	unsigned int		nr_prev_assist_thresh;
+	bool				thermal_thresh_enable;
 	s64			need_ts;
 	struct list_head	lru;
 	bool			enable;
@@ -257,6 +259,27 @@ static ssize_t show_busy_down_thres(const struct cluster_data *state, char *buf)
 	return count;
 }
 
+static ssize_t store_thermal_thresh_enable(struct cluster_data *state,
+				const char *buf, size_t count)
+{
+	unsigned int val;
+	bool bval;
+
+	if (sscanf(buf, "%u\n", &val) != 1)
+		return -EINVAL;
+
+	bval = !!val;
+	if (bval != state->thermal_thresh_enable)
+		state->thermal_thresh_enable = bval;
+
+	return count;
+}
+
+static ssize_t show_thermal_thresh_enable(const struct cluster_data *state, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%u\n", state->thermal_thresh_enable);
+}
+
 static ssize_t store_enable(struct cluster_data *state,
 				const char *buf, size_t count)
 {
@@ -431,6 +454,7 @@ core_ctl_attr_rw(busy_up_thres);
 core_ctl_attr_rw(busy_down_thres);
 core_ctl_attr_rw(task_thres);
 core_ctl_attr_rw(nr_prev_assist_thresh);
+core_ctl_attr_rw(thermal_thresh_enable);
 core_ctl_attr_ro(need_cpus);
 core_ctl_attr_ro(active_cpus);
 core_ctl_attr_ro(global_state);
@@ -445,6 +469,7 @@ static struct attribute *default_attrs[] = {
 	&busy_down_thres.attr,
 	&task_thres.attr,
 	&nr_prev_assist_thresh.attr,
+	&thermal_thresh_enable.attr,
 	&enable.attr,
 	&need_cpus.attr,
 	&active_cpus.attr,
@@ -733,19 +758,26 @@ static void update_running_avg(void)
 static unsigned int apply_task_need(const struct cluster_data *cluster,
 				    unsigned int new_need)
 {
+	struct cpufreq_policy *policy = cpufreq_cpu_get_raw(cluster->first_cpu);
+	int nr_thermal_thresh = 0;
+
+	if (cluster->thermal_thresh_enable && policy)
+		nr_thermal_thresh = (policy->cpuinfo.max_freq
+			< (policy->max + (policy->max >> 2))) ? 0 : 1;
+
 	/* resume all cores if there are enough tasks */
-	if (cluster->nrrun >= cluster->task_thres)
+	if (cluster->nrrun >= cluster->task_thres + nr_thermal_thresh)
 		return cluster->num_cpus;
 
 	/*
 	 * resume as many cores as the previous cluster
 	 * needs assistance with.
 	 */
-	if (cluster->nr_prev_assist >= cluster->nr_prev_assist_thresh)
+	if (cluster->nr_prev_assist >= cluster->nr_prev_assist_thresh + nr_thermal_thresh)
 		new_need = new_need + cluster->nr_prev_assist;
 
 	/* only resume more cores if there are tasks to run */
-	if (cluster->nrrun > new_need)
+	if (cluster->nrrun > new_need + nr_thermal_thresh)
 		new_need = new_need + 1;
 
 	/*
@@ -1323,6 +1355,7 @@ static int cluster_init(const struct cpumask *mask)
 	cluster->offline_delay_ms = 100;
 	cluster->task_thres = UINT_MAX;
 	cluster->nr_prev_assist_thresh = UINT_MAX;
+	cluster->thermal_thresh_enable = false;
 	cluster->nrrun = cluster->num_cpus;
 	cluster->enable = true;
 	cluster->nr_not_preferred_cpus = 0;

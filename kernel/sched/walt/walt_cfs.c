@@ -183,6 +183,13 @@ static void walt_get_indicies(struct task_struct *p, int *order_index,
 		return;
 	}
 
+#if IS_ENABLED(CONFIG_PERF_RESERVE)
+	if (is_task_prio_need_low_cpu(p))
+		return;
+	if (is_task_high_cpu_prio(p))
+		*end_index = num_sched_clusters;
+#endif
+
 	if (is_uclamp_boosted || per_task_boost ||
 		task_boost_policy(p) == SCHED_BOOST_ON_BIG ||
 		walt_task_skip_min_cpu(p)) {
@@ -274,6 +281,13 @@ static void walt_find_best_target(struct sched_domain *sd,
 		most_spare_wake_cap = LONG_MIN;
 	}
 
+#if IS_ENABLED(CONFIG_PERF_RESERVE)
+	if (is_task_prio_need_low_cpu(p)) {
+		stop_index = 0;
+		most_spare_wake_cap = LONG_MIN;
+	}
+#endif
+
 	/* fast path for prev_cpu */
 	if (((capacity_orig_of(prev_cpu) == capacity_orig_of(start_cpu)) ||
 				asym_cap_siblings(prev_cpu, start_cpu)) &&
@@ -340,9 +354,6 @@ retry:
 				continue;
 
 			if (fbt_env->skip_cpu == i)
-				continue;
-
-			if (wrq->num_mvp_tasks > 0)
 				continue;
 
 			/*
@@ -996,21 +1007,21 @@ static void walt_binder_low_latency_set(void *unused, struct task_struct *task,
 	if (unlikely(walt_disabled))
 		return;
 
-	if (task && current->signal &&
-			(current->signal->oom_score_adj == 0) &&
-			((current->prio < DEFAULT_PRIO) ||
-			(task->group_leader->prio < MAX_RT_PRIO)))
+	if (task && ((task_in_related_thread_group(current) &&
+			task->group_leader->prio < MAX_RT_PRIO) ||
+			(current->group_leader->prio < MAX_RT_PRIO &&
+			task_in_related_thread_group(task))))
 		wts->low_latency |= WALT_LOW_LATENCY_BINDER;
-}
-
-static void walt_binder_low_latency_clear(void *unused, struct binder_transaction *t)
-{
-	struct walt_task_struct *wts = (struct walt_task_struct *) current->android_vendor_data1;
-
-	if (unlikely(walt_disabled))
-		return;
-
-	if (wts->low_latency & WALT_LOW_LATENCY_BINDER)
+	else
+		/*
+		 * Clear low_latency flag if criterion above is not met, this
+		 * will handle usecase where for a binder thread WALT_LOW_LATENCY_BINDER
+		 * is set by one task and before WALT clears this flag after timer expiry
+		 * some other task tries to use same binder thread.
+		 *
+		 * The only gets cleared when binder transaction is initiated
+		 * and the above condition to set flasg is nto satisfied.
+		 */
 		wts->low_latency &= ~WALT_LOW_LATENCY_BINDER;
 }
 
@@ -1072,6 +1083,10 @@ static inline unsigned int walt_cfs_mvp_task_limit(struct task_struct *p)
 	/* Binder MVP tasks are high prio but have only single slice */
 	if (wts->mvp_prio == WALT_BINDER_MVP)
 		return WALT_MVP_SLICE;
+
+	if (walt_procfs_low_latency_task(p) ||
+			walt_pipeline_low_latency_task(p))
+		return WALT_MVP_LL_SLICE;
 
 	return WALT_MVP_LIMIT;
 }
@@ -1352,7 +1367,6 @@ void walt_cfs_init(void)
 	register_trace_android_rvh_select_task_rq_fair(walt_select_task_rq_fair, NULL);
 
 	register_trace_android_vh_binder_wakeup_ilocked(walt_binder_low_latency_set, NULL);
-	register_trace_binder_transaction_received(walt_binder_low_latency_clear, NULL);
 
 	register_trace_android_vh_binder_set_priority(binder_set_priority_hook, NULL);
 	register_trace_android_vh_binder_restore_priority(binder_restore_priority_hook, NULL);
