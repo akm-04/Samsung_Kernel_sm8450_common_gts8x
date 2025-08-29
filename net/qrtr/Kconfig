@@ -75,4 +75,7 @@ config QRTR_DEBUG
 	  and confirm rx flag is set. Also logging the skb alloc failure
 	  while allocating skb in rx path.
 
+config QRTR_WS_DEBUG
+	tristate "Wake Source debugging tool"
+
 endif # QRTR
