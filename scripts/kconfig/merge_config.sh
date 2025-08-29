@@ -161,6 +161,8 @@ for ORIG_MERGE_FILE in $MERGE_LIST ; do
 		fi
 	done
 	cat $MERGE_FILE >> $TMP_FILE
+	# Add new line for merging next configuration file
+	echo >> $TMP_FILE
 done
 
 if [ "$STRICT_MODE_VIOLATED" = "true" ]; then
