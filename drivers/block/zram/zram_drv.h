@@ -55,7 +55,6 @@ enum zram_pageflags {
 	ZRAM_READ_BDEV,
 	ZRAM_PPR,
 	ZRAM_UNDER_PPR,
-	ZRAM_LRU,
 
 	__NR_ZRAM_PAGEFLAGS,
 };
@@ -111,13 +110,12 @@ struct zram_stats {
 	atomic64_t bd_ppr_max_size;
 	atomic64_t bd_objreads;
 	atomic64_t bd_objwrites;
-	atomic64_t lru_pages;
 #endif
 };
 
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 #define ZRAM_WB_THRESHOLD 32
-#define NR_ZWBS 64
+#define NR_ZWBS 16
 #define NR_FALLOC_PAGES 512
 #define FALLOC_ALIGN_MASK (~(NR_FALLOC_PAGES - 1))
 struct zram_wb_header {
@@ -131,11 +129,9 @@ struct zram_wb_work {
 	struct page *dst_page;
 	struct bio *bio;
 	struct bio *bio_chain;
-	struct zram_writeback_buffer *buf;
 	struct zram *zram;
 	unsigned long handle;
 	int nr_pages;
-	bool ppr;
 };
 
 struct zram_wb_entry {
@@ -196,7 +192,7 @@ struct zram {
 #ifdef CONFIG_ZRAM_LRU_WRITEBACK
 	struct task_struct *wbd;
 	wait_queue_head_t wbd_wait;
-	u16 *wb_table;
+	u8 *wb_table;
 	unsigned long *chunk_bitmap;
 	unsigned long nr_lru_pages;
 	bool wbd_running;
@@ -206,8 +202,6 @@ struct zram {
 	spinlock_t bitmap_lock;
 	unsigned long *blk_bitmap;
 	struct mutex blk_bitmap_lock;
-	unsigned long *read_req_bitmap;
-	struct zram_writeback_buffer *buf;
 #endif
 };
 #endif

@@ -573,6 +573,7 @@ config DM_VERITY_FEC
 config DM_ANDROID_VERITY_AT_MOST_ONCE_DEFAULT_ENABLED
 	bool "Verity will validate blocks at most once"
 	depends on DM_VERITY
+	default y
 	help
 	  Default enables at_most_once option for dm-verity
 
