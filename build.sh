@@ -232,6 +232,20 @@ setup_env(){
     export LLVM=1
     export LLVM_IAS=1
 
+    # Required by techpack
+    #1. target config
+    BUILD_TARGET=gts8uwifi_eur_open
+    export MODEL=$(echo ${BUILD_TARGET} | cut -d'_' -f1)
+    export PROJECT_NAME=${MODEL}
+    export REGION=$(echo ${BUILD_TARGET} | cut -d'_' -f2)
+    export CARRIER=$(echo ${BUILD_TARGET} | cut -d'_' -f3)
+    export TARGET_BUILD_VARIANT= user
+                        
+    #2. Chipset common config
+    CHIPSET_NAME=waipio
+    export TARGET_PRODUCT=gki
+    export TARGET_BOARD_PLATFORM=gki
+
     echo -e "${green}Environment set up done!${nocol}"
 }
 
