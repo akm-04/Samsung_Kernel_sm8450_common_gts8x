@@ -151,7 +151,7 @@ static struct sleep_stats *a_subsystem_stats;
 /* System sleep stats before and after suspend */
 static struct sleep_stats *b_system_stats;
 static struct sleep_stats *a_system_stats;
-bool ddr_freq_update;
+bool qcom_ddr_freq_update;
 static DEFINE_MUTEX(sleep_stats_mutex);
 
 static int stats_data_open(struct inode *inode, struct file *file)
@@ -351,7 +351,7 @@ static long stats_data_ioctl(struct file *file, unsigned int cmd,
 	} else {
 		int modes = DDR_STATS_MAX_NUM_MODES;
 
-		if (ddr_freq_update) {
+		if (qcom_ddr_freq_update) {
 			ret = ddr_stats_freq_sync_send_msg();
 			if (ret < 0)
 				goto out_free;
@@ -359,7 +359,7 @@ static long stats_data_ioctl(struct file *file, unsigned int cmd,
 		}
 
 		ddr_stats_sleep_stat(drvdata, temp);
-		if (ddr_freq_update) {
+		if (qcom_ddr_freq_update) {
 			int i;
 			/* Before transmitting ddr sleep_stats, check ddr freq's count. */
 			for (i = DDR_STATS_NUM_MODES_ADDR; i < drvdata->ddr_entry_count; i++) {
@@ -507,7 +507,7 @@ static int subsystem_stats_probe(struct platform_device *pdev)
 	a_system_stats = devm_kcalloc(&pdev->dev, ARRAY_SIZE(system_stats),
 						sizeof(struct sleep_stats), GFP_KERNEL);
 
-	ddr_freq_update = of_property_read_bool(pdev->dev.of_node,
+	qcom_ddr_freq_update = of_property_read_bool(pdev->dev.of_node,
 							"ddr-freq-update");
 
 	platform_set_drvdata(pdev, stats_data);
