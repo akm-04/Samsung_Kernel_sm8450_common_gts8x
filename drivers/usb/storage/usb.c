@@ -405,8 +405,7 @@ SkipForAbort:
 			clear_bit(US_FLIDX_ABORTING, &us->dflags);
 			clear_bit(US_FLIDX_TIMED_OUT, &us->dflags);
 #ifdef CONFIG_USB_DEBUG_DETAILED_LOG
-			printk(KERN_ERR USB_STORAGE "%s clear TIMED_OUT\n",
-				__func__);
+			pr_err("usb_storage: %s clear TIMED_OUT\n", __func__);
 #endif
 		}
 

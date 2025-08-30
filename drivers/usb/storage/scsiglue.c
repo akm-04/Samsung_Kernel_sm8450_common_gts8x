@@ -379,7 +379,7 @@ static int queuecommand_lck(struct scsi_cmnd *srb,
 	if (test_bit(US_FLIDX_DISCONNECTING, &us->dflags)) {
 		usb_stor_dbg(us, "Fail command during disconnect\n");
 #ifdef CONFIG_USB_DEBUG_DETAILED_LOG
-		printk(KERN_ERR USB_STORAGE "%s, Fail command during disconnect\n", __func__);
+		printk(KERN_ERR "usb-storage: %s, Fail command during disconnect\n", __func__);
 #endif
 		srb->result = DID_NO_CONNECT << 16;
 		done(srb);
@@ -416,7 +416,7 @@ static int command_abort(struct scsi_cmnd *srb)
 
 	usb_stor_dbg(us, "%s called\n", __func__);
 #ifdef CONFIG_USB_DEBUG_DETAILED_LOG
-	printk(KERN_ERR USB_STORAGE "%s scsi_lock +\n", __func__);
+	printk(KERN_ERR "usb-storage: %s scsi_lock +\n", __func__);
 #endif
 
 	/*
@@ -430,7 +430,7 @@ static int command_abort(struct scsi_cmnd *srb)
 		scsi_unlock(us_to_host(us));
 		usb_stor_dbg(us, "-- nothing to abort\n");
 #ifdef CONFIG_USB_DEBUG_DETAILED_LOG
-		printk(KERN_ERR USB_STORAGE "%s -- nothing to abort -\n",
+		printk(KERN_ERR "usb-storage: %s -- nothing to abort -\n",
 				__func__);
 #endif
 		return FAILED;
@@ -450,13 +450,13 @@ static int command_abort(struct scsi_cmnd *srb)
 	}
 	scsi_unlock(us_to_host(us));
 #ifdef CONFIG_USB_DEBUG_DETAILED_LOG
-	printk(KERN_ERR USB_STORAGE "%s scsi_unlock\n", __func__);
+	printk(KERN_ERR "usb-storage: %s scsi_unlock\n", __func__);
 #endif
 
 	/* Wait for the aborted command to finish */
 	wait_for_completion(&us->notify);
 #ifdef CONFIG_USB_DEBUG_DETAILED_LOG
-	printk(KERN_ERR USB_STORAGE "%s -\n", __func__);
+	printk(KERN_ERR "usb-storage: %s -\n", __func__);
 #endif
 	return SUCCESS;
 }
@@ -518,14 +518,14 @@ void usb_stor_report_bus_reset(struct us_data *us)
 {
 	struct Scsi_Host *host = us_to_host(us);
 #ifdef CONFIG_USB_DEBUG_DETAILED_LOG
-	printk(KERN_ERR USB_STORAGE "%s scsi_lock\n", __func__);
+	printk(KERN_ERR "usb-storage: %s scsi_lock\n", __func__);
 #endif
 
 	scsi_lock(host);
 	scsi_report_bus_reset(host, 0);
 	scsi_unlock(host);
 #ifdef CONFIG_USB_DEBUG_DETAILED_LOG
-	printk(KERN_ERR USB_STORAGE "%s scsi_unlock\n", __func__);
+	printk(KERN_ERR "usb-storage: %s scsi_unlock\n", __func__);
 #endif
 }
 
