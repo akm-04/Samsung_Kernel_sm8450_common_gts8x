@@ -88,7 +88,7 @@ SUSFS_CHECKOUT_HASH=""   # Specific commit SHA after cloning (empty = latest)
 # ---------------------------------------------------------------------------- #
 
 ## KernelSU-Next Options
-ENABLE_KSU_NEXT=0        # Use KernelSU-Next? (1 = yes, 0 = no)
+ENABLE_KSU_NEXT=1        # Use KernelSU-Next? (1 = yes, 0 = no)
 KSU_NEXT_STABLE=1        # Select stable branch? (1 = stable, 0 = dev)
 KSU_NEXT_MANUAL_HOOKS=1  # Hooks style (1 = manual, 0 = kprobes)
 KSUN_CHECKOUT_HASH=""    # Specific KernelSU-Next commit SHA
@@ -98,7 +98,7 @@ ENABLE_SUKISU=0          # Use SUKISU-Ultra? (1 = yes, 0 = no)
 SUKI_MANUAL_HOOKS=0      # Manual Hooks for SUKISU (SUSFS version only) (1 = manual, 0 = default)
 SUKI_TRACEPOINTS_HOOK=1  # Use tracepoint hook for Sukisu-Ultra (for SUSFS and Normal ver) (1 = enable, 0 = disabled)
 SUKI_CHECKOUT_HASH=""    # Specific SUKISU commit SHA
-PATCH_KPM=1              # Patches the kernel binary after its done compiling.
+PATCH_KPM=0              # Patches the kernel binary after its done compiling.
 KPM_VERSION="0.12.0"     # Release tag of KPM binary
 
 ## KernelSU Options     | Note KernelSU-Next removed SUSFS support from their branch
@@ -107,7 +107,7 @@ KSU_CHECKOUT_HASH=""     # Specific KernelSU commit SHA
 
 ## Apatch Options
 # Fetch release tags from here: https://github.com/bmax121/KernelPatch/releases
-ENABLE_APATCH=1          # Apply apatch patches? superkey will be asked when patching
+ENABLE_APATCH=0          # Apply apatch patches? superkey will be asked when patching
 APATCH_VER="0.12.0"  # Release tag of Apatch binary
 KPTOOLS_VER="0.11.3"     # Release tag of kptools binary
 
