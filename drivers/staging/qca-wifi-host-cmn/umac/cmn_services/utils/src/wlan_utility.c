@@ -971,6 +971,7 @@ static bool wlan_minidump_log_enabled(struct wlan_objmgr_psoc *psoc,
 	return false;
 }
 #endif
+
 void wlan_minidump_log(void *start_addr, const size_t size,
 		       void *psoc_obj,
 		       enum wlan_minidump_host_data type,

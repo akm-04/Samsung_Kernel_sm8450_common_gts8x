@@ -534,6 +534,9 @@ struct cdp_cmn_ops {
 				    uint32_t value);
 
 	ol_txrx_tx_fp tx_send;
+
+	void (*set_tx_pause)(ol_txrx_soc_handle soc, bool flag);
+
 	/**
 	 * txrx_get_os_rx_handles_from_vdev() - Return function, osif vdev
 	 *					to deliver pkt to stack.
@@ -1043,6 +1046,15 @@ struct cdp_host_stats_ops {
 
 	void (*txrx_reset_vdev_stats_id)(struct cdp_soc_t *soc,
 					 uint8_t vdev_stats_id);
+
+#ifdef HW_TX_DELAY_STATS_ENABLE
+	void
+	(*enable_disable_vdev_tx_delay_stats)(struct cdp_soc_t *soc,
+					      uint8_t vdev_id,
+					      uint8_t value);
+	uint8_t (*is_tx_delay_stats_enabled)(struct cdp_soc_t *soc_hdl,
+					     uint8_t vdev_id);
+#endif
 };
 
 struct cdp_wds_ops {

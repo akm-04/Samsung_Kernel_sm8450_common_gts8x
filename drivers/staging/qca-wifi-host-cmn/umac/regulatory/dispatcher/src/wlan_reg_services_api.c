@@ -637,6 +637,11 @@ bool wlan_reg_is_etsi(uint8_t *country)
 	return reg_is_etsi_alpha2(country);
 }
 
+bool wlan_reg_ctry_support_vlp(uint8_t *country)
+{
+	return reg_ctry_support_vlp(country);
+}
+
 void wlan_reg_register_chan_change_callback(struct wlan_objmgr_psoc *psoc,
 					    void *cbk, void *arg)
 {
@@ -1441,7 +1446,7 @@ QDF_STATUS
 wlan_reg_get_client_power_for_connecting_ap(struct wlan_objmgr_pdev *pdev,
 					    enum reg_6g_ap_type ap_type,
 					    qdf_freq_t chan_freq,
-					    bool *is_psd, uint16_t *tx_power,
+					    bool is_psd, uint16_t *tx_power,
 					    uint16_t *eirp_psd_power)
 {
 	return reg_get_client_power_for_connecting_ap(pdev, ap_type, chan_freq,

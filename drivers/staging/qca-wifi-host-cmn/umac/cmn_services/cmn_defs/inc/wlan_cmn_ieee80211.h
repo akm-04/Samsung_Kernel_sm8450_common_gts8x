@@ -271,6 +271,9 @@
 /* Max channel switch time IE length */
 #define WLAN_MAX_CHAN_SWITCH_TIME_IE_LEN         4
 
+#define WLAN_MIN_HECAP_IE_LEN                    22
+#define WLAN_MAX_HECAP_IE_LEN                    55
+
 #define WLAN_MAX_SRP_IE_LEN                      21
 #define WLAN_MAX_MUEDCA_IE_LEN                   14
 #define WLAN_MAX_HE_6G_CAP_IE_LEN                3

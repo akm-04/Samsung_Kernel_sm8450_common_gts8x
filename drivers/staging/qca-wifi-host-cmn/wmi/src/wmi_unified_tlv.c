@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1074,9 +1074,10 @@ vdev_start_cmd_fill_11be(wmi_vdev_start_request_cmd_fixed_param *cmd,
 			 struct vdev_start_params *req)
 {
 	cmd->eht_ops = req->eht_ops;
-	cmd->puncture_20mhz_bitmap = req->channel.puncture_pattern;
-	wmi_info("EHT ops: %x puncture_pattern %x",
-		 req->eht_ops, req->channel.puncture_pattern);
+	cmd->puncture_20mhz_bitmap = ~req->channel.puncture_bitmap;
+	wmi_info("EHT ops: %x puncture_bitmap %x wmi cmd puncture bitmap %x",
+		 req->eht_ops, req->channel.puncture_bitmap,
+		 cmd->puncture_20mhz_bitmap);
 }
 #else
 static void
@@ -2751,7 +2752,7 @@ static uint8_t *update_peer_flags_tlv_ehtinfo(
 	int i;
 
 	cmd->peer_eht_ops = param->peer_eht_ops;
-	cmd->puncture_20mhz_bitmap = param->puncture_pattern;
+	cmd->puncture_20mhz_bitmap = ~param->puncture_bitmap;
 
 	qdf_mem_copy(&cmd->peer_eht_cap_mac, &param->peer_eht_cap_macinfo,
 		     sizeof(param->peer_eht_cap_macinfo));
@@ -10488,12 +10489,21 @@ QDF_STATUS save_ext_service_bitmap_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 		return QDF_STATUS_SUCCESS;
 	}
 
-	if (!soc->wmi_ext2_service_bitmap) {
+	if (!soc->wmi_ext2_service_bitmap ||
+	    (param_buf->num_wmi_service_ext_bitmap >
+	     soc->wmi_ext2_service_bitmap_len)) {
+		if (soc->wmi_ext2_service_bitmap) {
+			qdf_mem_free(soc->wmi_ext2_service_bitmap);
+			soc->wmi_ext2_service_bitmap = NULL;
+		}
 		soc->wmi_ext2_service_bitmap =
 			qdf_mem_malloc(param_buf->num_wmi_service_ext_bitmap *
 				       sizeof(uint32_t));
 		if (!soc->wmi_ext2_service_bitmap)
 			return QDF_STATUS_E_NOMEM;
+
+		soc->wmi_ext2_service_bitmap_len =
+			param_buf->num_wmi_service_ext_bitmap;
 	}
 
 	qdf_mem_copy(soc->wmi_ext2_service_bitmap,
@@ -15968,6 +15978,7 @@ extract_roam_scan_stats_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 	dst->type = src_data->roam_scan_type;
 	dst->num_chan = src_data->roam_scan_channel_count;
 	dst->next_rssi_threshold = src_data->next_rssi_trigger_threshold;
+	dst->is_btcoex_active = WMI_GET_BTCONNECT_STATUS(src_data->flags);
 	dst->frame_info_count = src_data->frame_info_count;
 	if (dst->frame_info_count >  WLAN_ROAM_MAX_FRAME_INFO)
 		dst->frame_info_count =  WLAN_ROAM_MAX_FRAME_INFO;
@@ -15979,6 +15990,15 @@ extract_roam_scan_stats_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 			dst->num_chan = MAX_ROAM_SCAN_CHAN;
 
 		src_chan = &param_buf->roam_scan_chan_info[chan_idx];
+
+		if ((dst->num_chan + chan_idx) >
+		    param_buf->num_roam_scan_chan_info) {
+			wmi_err("Invalid TLV. num_chan %d chan_idx %d num_roam_scan_chan_info %d",
+				dst->num_chan, chan_idx,
+				param_buf->num_roam_scan_chan_info);
+			return QDF_STATUS_SUCCESS;
+		}
+
 		for (i = 0; i < dst->num_chan; i++) {
 			dst->chan_freq[i] = src_chan->channel;
 			src_chan++;
@@ -16088,6 +16108,14 @@ extract_roam_11kv_stats_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 
 	if (dst->num_freq > MAX_ROAM_SCAN_CHAN)
 		dst->num_freq = MAX_ROAM_SCAN_CHAN;
+
+	if ((dst->num_freq + rpt_idx) >
+	    param_buf->num_roam_neighbor_report_chan_info) {
+		wmi_err("Invalid TLV. num_freq %d rpt_idx %d num_roam_neighbor_report_chan_info %d",
+			dst->num_freq, rpt_idx,
+			param_buf->num_roam_scan_chan_info);
+		return QDF_STATUS_SUCCESS;
+	}
 
 	for (i = 0; i < dst->num_freq; i++) {
 		dst->freq[i] = src_freq->channel;
@@ -17804,6 +17832,9 @@ event_ids[wmi_roam_scan_chan_list_id] =
 	event_ids[wmi_vdev_quiet_offload_eventid] =
 			WMI_QUIET_HANDLING_EVENTID;
 #endif
+#ifdef MULTI_CLIENT_LL_SUPPORT
+	event_ids[wmi_vdev_latency_event_id] = WMI_VDEV_LATENCY_LEVEL_EVENTID;
+#endif
 }
 
 #ifdef WLAN_FEATURE_LINK_LAYER_STATS
@@ -18252,6 +18283,14 @@ static void populate_tlv_service(uint32_t *wmi_service)
 #ifdef WLAN_FEATURE_11BE_MLO
 	wmi_service[wmi_service_mlo_sta_nan_ndi_support] =
 			WMI_SERVICE_MLO_STA_NAN_NDI_SUPPORT;
+#endif
+#ifdef WLAN_FEATURE_ROAM_OFFLOAD
+	wmi_service[wmi_service_roam_stats_per_candidate_frame_info] =
+		WMI_SERVICE_ROAM_STAT_PER_CANDIDATE_FRAME_INFO_SUPPORT;
+#endif
+#ifdef MULTI_CLIENT_LL_SUPPORT
+	wmi_service[wmi_service_configure_multi_client_ll_support] =
+				WMI_SERVICE_MULTI_CLIENT_LL_SUPPORT;
 #endif
 }
 
