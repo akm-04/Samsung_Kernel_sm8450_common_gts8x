@@ -634,8 +634,19 @@ osif_send_sta_twt_teardown_req(struct wlan_objmgr_vdev *vdev,
 
 	status = ucfg_twt_teardown_req(psoc, twt_params, context);
 	if (QDF_IS_STATUS_ERROR(status)) {
-		ret = qdf_status_to_os_return(status);
-		osif_err("Failed to send del dialog command");
+		if (twt_params->dialog_id == TWT_ALL_SESSIONS_DIALOG_ID &&
+		    status == QDF_STATUS_E_AGAIN) {
+			/*
+			 * If twt teardown is sent to driver with 0 dialog id
+			 * and there is no TWT session. Driver should return status
+			 * as SUCCESS
+			 */
+			ret = 0;
+			osif_err("No TWT session active");
+		} else {
+			ret = qdf_status_to_os_return(status);
+			osif_err("Failed to send del dialog command");
+		}
 		goto cleanup;
 	}
 

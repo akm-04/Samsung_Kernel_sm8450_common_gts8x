@@ -181,6 +181,8 @@
 #define g_mode_rates_size (12)
 #define a_mode_rates_size (8)
 
+#define WLAN_WAIT_WLM_LATENCY_LEVEL 1000
+
 /**
  * rtt_is_initiator - Macro to check if the bitmap has any RTT roles set
  * @bitmap: The bitmap to be checked
@@ -4792,12 +4794,13 @@ hdd_send_roam_scan_channel_freq_list_to_sme(struct hdd_context *hdd_ctx,
 		return QDF_STATUS_E_INVAL;
 	}
 
-	nla_for_each_nested(curr_attr, tb2[PARAM_SCAN_FREQ_LIST], rem)
+	nla_for_each_nested(curr_attr, tb2[PARAM_SCAN_FREQ_LIST], rem) {
+		if (num_chan >= SIR_MAX_SUPPORTED_CHANNEL_LIST) {
+			hdd_err("number of channels (%d) supported exceeded max (%d)",
+				num_chan, SIR_MAX_SUPPORTED_CHANNEL_LIST);
+			return QDF_STATUS_E_INVAL;
+		}
 		num_chan++;
-	if (num_chan > SIR_MAX_SUPPORTED_CHANNEL_LIST) {
-		hdd_err("number of channels (%d) supported exceeded max (%d)",
-			num_chan, SIR_MAX_SUPPORTED_CHANNEL_LIST);
-		return QDF_STATUS_E_INVAL;
 	}
 	num_chan = 0;
 
@@ -8889,13 +8892,271 @@ static void hdd_set_wlm_host_latency_level(struct hdd_context *hdd_ctx,
 		adapter->runtime_disable_rx_thread = false;
 }
 
+#ifdef MULTI_CLIENT_LL_SUPPORT
+void
+hdd_latency_level_event_handler_cb(const struct latency_level_data *event_data,
+				   uint8_t vdev_id)
+{
+	struct osif_request *request;
+	struct latency_level_data *data;
+	struct hdd_context *hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
+	struct hdd_adapter *hdd_adapter;
+	uint32_t latency_host_flags = 0;
+	QDF_STATUS status;
+
+	hdd_enter();
+
+	hdd_adapter = hdd_get_adapter_by_vdev(hdd_ctx, vdev_id);
+	if (!hdd_adapter) {
+		hdd_err("adapter is NULL vdev_id = %d", vdev_id);
+		return;
+	}
+
+	if (wlan_hdd_validate_context(hdd_ctx))
+		return;
+
+	if (!event_data) {
+		hdd_err("Invalid latency level event data");
+		return;
+	}
+
+	if (hdd_adapter->multi_ll_resp_expected) {
+		request =
+			osif_request_get(hdd_adapter->multi_ll_response_cookie);
+		if (!request) {
+			hdd_err("Invalid request");
+			return;
+		}
+		data = osif_request_priv(request);
+		data->latency_level = event_data->latency_level;
+		data->vdev_id = event_data->vdev_id;
+		osif_request_complete(request);
+		osif_request_put(request);
+	} else {
+		hdd_adapter->latency_level = event_data->latency_level;
+		wlan_hdd_set_wlm_mode(hdd_ctx, hdd_adapter->latency_level);
+		hdd_debug("adapter->latency_level:%d",
+			  hdd_adapter->latency_level);
+		status = ucfg_mlme_get_latency_host_flags(hdd_ctx->psoc,
+						hdd_adapter->latency_level,
+						&latency_host_flags);
+		if (QDF_IS_STATUS_ERROR(status))
+			hdd_err("failed to get latency host flags");
+		else
+			hdd_set_wlm_host_latency_level(hdd_ctx, hdd_adapter,
+						       latency_host_flags);
+		}
+
+	hdd_exit();
+}
+
+uint8_t wlan_hdd_get_client_id_bitmap(struct hdd_adapter *adapter)
+{
+	uint8_t i, client_id_bitmap = 0;
+
+	for (i = 0; i < WLM_MAX_HOST_CLIENT; i++) {
+		if (!adapter->client_info[i].in_use)
+			continue;
+		client_id_bitmap |=
+			BIT(adapter->client_info[i].client_id);
+	}
+
+	return client_id_bitmap;
+}
+
+QDF_STATUS wlan_hdd_get_set_client_info_id(struct hdd_adapter *adapter,
+					   uint32_t port_id,
+					   uint32_t *client_id)
+{
+	uint8_t i;
+	QDF_STATUS status = QDF_STATUS_E_INVAL;
+
+	for (i = 0; i < WLM_MAX_HOST_CLIENT; i++) {
+		if (adapter->client_info[i].in_use) {
+			/* Receives set latency cmd for an existing port id */
+			if (port_id == adapter->client_info[i].port_id) {
+				*client_id = adapter->client_info[i].client_id;
+				status = QDF_STATUS_SUCCESS;
+				break;
+			}
+			continue;
+		} else {
+			/* Process set latency level from a new client */
+			adapter->client_info[i].in_use = true;
+			adapter->client_info[i].port_id = port_id;
+			*client_id = adapter->client_info[i].client_id;
+			status = QDF_STATUS_SUCCESS;
+			break;
+		}
+	}
+
+	if (i == WLM_MAX_HOST_CLIENT)
+		hdd_debug("Max client ID reached");
+
+	return status;
+}
+
+QDF_STATUS wlan_hdd_set_wlm_latency_level(struct hdd_adapter *adapter,
+					  uint16_t latency_level,
+					  uint32_t client_id_bitmap,
+					  bool force_reset)
+{
+	QDF_STATUS status;
+	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(adapter);
+	int ret;
+	struct osif_request *request = NULL;
+	struct latency_level_data *priv;
+	static const struct osif_request_params params = {
+		.priv_size = sizeof(*priv),
+		.timeout_ms = WLAN_WAIT_WLM_LATENCY_LEVEL,
+		.dealloc = NULL,
+	};
+
+	/* ignore unless in STA mode */
+	if (adapter->device_mode != QDF_STA_MODE) {
+		hdd_debug_rl("WLM offload is supported in STA mode only");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	adapter->multi_ll_resp_expected = true;
+
+	request = osif_request_alloc(&params);
+	if (!request) {
+		hdd_err("Request allocation failure");
+		return QDF_STATUS_E_FAILURE;
+	}
+	adapter->multi_ll_response_cookie = osif_request_cookie(request);
+	adapter->multi_ll_req_in_progress = true;
+
+	status = sme_set_wlm_latency_level(hdd_ctx->mac_handle,
+					   adapter->vdev_id, latency_level,
+					   client_id_bitmap, force_reset);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		hdd_err("Failure while sending command to fw");
+		goto err;
+	}
+
+	ret = osif_request_wait_for_response(request);
+	if (ret) {
+		hdd_err("SME timed out while retrieving latency level");
+		status = qdf_status_from_os_return(ret);
+		goto err;
+	}
+	priv = osif_request_priv(request);
+	if (!priv) {
+		hdd_err("invalid get latency level");
+		status = QDF_STATUS_E_FAILURE;
+		goto err;
+	}
+
+	hdd_debug("[MULTI_CLIENT] latency received from FW:%d",
+		  priv->latency_level);
+	adapter->latency_level = priv->latency_level;
+err:
+	if (request)
+		osif_request_put(request);
+	adapter->multi_ll_req_in_progress = false;
+	adapter->multi_ll_resp_expected = false;
+	adapter->multi_ll_response_cookie = NULL;
+
+	return status;
+}
+
+bool hdd_get_multi_client_ll_support(struct hdd_adapter *adapter)
+{
+	return adapter->multi_client_ll_support;
+}
+
+/**
+ * wlan_hdd_reset_client_info() - reset multi client info table
+ * @adapter: adapter context
+ * @client_id: client id
+ *
+ * Return: none
+ */
+static void wlan_hdd_reset_client_info(struct hdd_adapter *adapter,
+				       uint32_t client_id)
+{
+	adapter->client_info[client_id].in_use = false;
+	adapter->client_info[client_id].port_id = 0;
+	adapter->client_info[client_id].client_id = client_id;
+}
+
+QDF_STATUS wlan_hdd_set_wlm_client_latency_level(struct hdd_adapter *adapter,
+						 uint32_t port_id,
+						 uint16_t latency_level)
+{
+	uint32_t client_id, client_id_bitmap;
+	QDF_STATUS status;
+
+	status = wlan_hdd_get_set_client_info_id(adapter, port_id,
+						 &client_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		return status;
+
+	client_id_bitmap = BIT(client_id);
+	status = wlan_hdd_set_wlm_latency_level(adapter,
+						latency_level,
+						client_id_bitmap,
+						false);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		hdd_debug("Fail to set latency level for client_id:%d",
+			  client_id);
+		wlan_hdd_reset_client_info(adapter, client_id);
+		return status;
+	}
+	return status;
+}
+
+/**
+ * wlan_hdd_get_multi_ll_req_in_progress() - get multi_ll_req_in_progress flag
+ * @adapter: adapter context
+ *
+ * Return: true if multi ll req in progress
+ */
+static bool wlan_hdd_get_multi_ll_req_in_progress(struct hdd_adapter *adapter)
+{
+	return adapter->multi_ll_req_in_progress;
+}
+#else
+static inline bool
+wlan_hdd_get_multi_ll_req_in_progress(struct hdd_adapter *adapter)
+{
+	return false;
+}
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0))
+static QDF_STATUS hdd_get_netlink_sender_portid(struct hdd_context *hdd_ctx,
+						uint32_t *port_id)
+{
+	struct wiphy *wiphy = hdd_ctx->wiphy;
+
+	/* get netlink portid of sender */
+	*port_id =  cfg80211_vendor_cmd_get_sender(wiphy);
+
+	return QDF_STATUS_SUCCESS;
+}
+#else
+static inline QDF_STATUS
+hdd_get_netlink_sender_portid(struct hdd_context *hdd_ctx, uint32_t *port_id)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+#endif
+
 static int hdd_config_latency_level(struct hdd_adapter *adapter,
 				    const struct nlattr *attr)
 {
 	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(adapter);
-	uint16_t latency_level;
+	uint32_t port_id;
+	uint16_t latency_level, host_latency_level;
 	QDF_STATUS status;
 	uint32_t latency_host_flags = 0;
+	int ret;
+
+	if (hdd_validate_adapter(adapter))
+		return -EINVAL;
 
 	if (!hdd_is_wlm_latency_manager_supported(hdd_ctx))
 		return -ENOTSUPP;
@@ -8913,12 +9174,37 @@ static int hdd_config_latency_level(struct hdd_adapter *adapter,
 		return -EINVAL;
 	}
 
-	wlan_hdd_set_wlm_mode(hdd_ctx, latency_level);
+	host_latency_level = latency_level - 1;
 
-	/* Map the latency value to the level which fw expected
-	 * 0 - normal, 1 - xr, 2 - low, 3 - ultralow
-	 */
-	adapter->latency_level = latency_level - 1;
+	if (hdd_get_multi_client_ll_support(adapter)) {
+		if (wlan_hdd_get_multi_ll_req_in_progress(adapter)) {
+			hdd_err_rl("multi ll request already in progress");
+			return -EBUSY;
+		}
+		/* get netlink portid of sender */
+		status = hdd_get_netlink_sender_portid(hdd_ctx, &port_id);
+		if (QDF_IS_STATUS_ERROR(status))
+			goto error;
+		status = wlan_hdd_set_wlm_client_latency_level(adapter, port_id,
+							host_latency_level);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			hdd_debug("Fail to set latency level");
+			goto error;
+		}
+	} else {
+		status = sme_set_wlm_latency_level(hdd_ctx->mac_handle,
+						   adapter->vdev_id,
+						   host_latency_level, 0,
+						   false);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			hdd_err("set latency level failed, %u", status);
+			goto error;
+		}
+		adapter->latency_level = host_latency_level;
+	}
+
+	wlan_hdd_set_wlm_mode(hdd_ctx, adapter->latency_level);
+	hdd_debug("adapter->latency_level:%d", adapter->latency_level);
 
 	status = ucfg_mlme_get_latency_host_flags(hdd_ctx->psoc,
 						  adapter->latency_level,
@@ -8928,14 +9214,10 @@ static int hdd_config_latency_level(struct hdd_adapter *adapter,
 	else
 		hdd_set_wlm_host_latency_level(hdd_ctx, adapter,
 					       latency_host_flags);
+error:
+	ret = qdf_status_to_os_return(status);
 
-	status = sme_set_wlm_latency_level(hdd_ctx->mac_handle,
-					   adapter->vdev_id,
-					   adapter->latency_level);
-	if (QDF_IS_STATUS_ERROR(status))
-		hdd_err("set latency level failed, %u", status);
-
-	return qdf_status_to_os_return(status);
+	return ret;
 }
 
 static int hdd_config_disable_fils(struct hdd_adapter *adapter,
@@ -10421,6 +10703,7 @@ static int hdd_test_config_6ghz_security_test_mode(struct hdd_context *hdd_ctx,
 
 	cfg_val = nla_get_u8(attr);
 	hdd_debug("safe mode setting %d", cfg_val);
+	wlan_mlme_set_safe_mode_enable(hdd_ctx->psoc, cfg_val);
 	if (cfg_val) {
 		wlan_cm_set_check_6ghz_security(hdd_ctx->psoc, false);
 		wlan_cm_set_6ghz_key_mgmt_mask(hdd_ctx->psoc,
@@ -19600,11 +19883,20 @@ static int __wlan_hdd_cfg80211_add_key(struct wiphy *wiphy,
 }
 
 #ifdef CFG80211_KEY_INSTALL_SUPPORT_ON_WDEV
+#ifdef CFG80211_SET_KEY_WITH_SRC_MAC
+static int wlan_hdd_cfg80211_add_key(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     u8 key_index, bool pairwise,
+				     const u8 *src_addr,
+				     const u8 *mac_addr,
+				     struct key_params *params)
+#else
 static int wlan_hdd_cfg80211_add_key(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     u8 key_index, bool pairwise,
 				     const u8 *mac_addr,
 				     struct key_params *params)
+#endif
 {
 	int errno = -EINVAL;
 	struct osif_vdev_sync *vdev_sync;
@@ -19627,11 +19919,20 @@ static int wlan_hdd_cfg80211_add_key(struct wiphy *wiphy,
 	return errno;
 }
 #else
+#ifdef CFG80211_SET_KEY_WITH_SRC_MAC
+static int wlan_hdd_cfg80211_add_key(struct wiphy *wiphy,
+				     struct net_device *ndev,
+				     u8 key_index, bool pairwise,
+				     const u8 *src_addr,
+				     const u8 *mac_addr,
+				     struct key_params *params)
+#else
 static int wlan_hdd_cfg80211_add_key(struct wiphy *wiphy,
 				     struct net_device *ndev,
 				     u8 key_index, bool pairwise,
 				     const u8 *mac_addr,
 				     struct key_params *params)
+#endif
 {
 	int errno;
 	struct osif_vdev_sync *vdev_sync;
@@ -20596,6 +20897,14 @@ QDF_STATUS hdd_softap_deauth_all_sta(struct hdd_adapter *adapter,
 		if (!sta_info->is_deauth_in_progress) {
 			hdd_debug("Delete STA with MAC:" QDF_MAC_ADDR_FMT,
 				  QDF_MAC_ADDR_REF(sta_info->sta_mac.bytes));
+
+			if (QDF_IS_ADDR_BROADCAST(sta_info->sta_mac.bytes)) {
+				hdd_put_sta_info_ref(&adapter->sta_info_list,
+						&sta_info, true,
+						STA_INFO_SOFTAP_DEAUTH_ALL_STA);
+				continue;
+			}
+
 			qdf_mem_copy(param->peerMacAddr.bytes,
 				     sta_info->sta_mac.bytes,
 				     QDF_MAC_ADDR_SIZE);

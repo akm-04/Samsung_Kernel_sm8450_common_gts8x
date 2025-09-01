@@ -2673,6 +2673,8 @@ static QDF_STATUS sap_validate_dfs_nol(struct sap_context *sap_ctx,
 	bool b_leak_chan = false;
 	uint16_t temp_freq;
 	uint16_t sap_freq;
+	enum channel_state ch_state;
+	bool is_chan_nol = false;
 
 	sap_freq = sap_ctx->chan_freq;
 	temp_freq = sap_freq;
@@ -2689,9 +2691,24 @@ static QDF_STATUS sap_validate_dfs_nol(struct sap_context *sap_ctx,
 	 * check if channel is in DFS_NOL or if the channel
 	 * has leakage to the channels in NOL
 	 */
-	if (sap_dfs_is_channel_in_nol_list(sap_ctx, sap_ctx->chan_freq,
-					   PHY_CHANNEL_BONDING_STATE_MAX) ||
-	    b_leak_chan) {
+
+	if (wlan_vdev_mlme_is_mlo_ap(sap_ctx->vdev)) {
+		ch_state =
+			wlan_reg_get_channel_state_from_secondary_list_for_freq(
+						mac_ctx->pdev, sap_freq);
+		if (CHANNEL_STATE_ENABLE != ch_state &&
+		    CHANNEL_STATE_DFS != ch_state) {
+			sap_err_rl("Invalid sap freq = %d, ch state=%d",
+				   sap_freq, ch_state);
+			is_chan_nol = true;
+		}
+	} else {
+		is_chan_nol = sap_dfs_is_channel_in_nol_list(
+					sap_ctx, sap_ctx->chan_freq,
+					PHY_CHANNEL_BONDING_STATE_MAX);
+	}
+
+	if (is_chan_nol || b_leak_chan) {
 		qdf_freq_t chan_freq;
 
 		/* find a new available channel */
@@ -2765,6 +2782,53 @@ static void sap_validate_chanmode_and_chwidth(struct mac_context *mac_ctx,
 			 orig_phymode, sap_ctx->phyMode);
 }
 
+static bool
+wlansap_is_power_change_required(struct mac_context *mac_ctx,
+				 qdf_freq_t sap_freq)
+{
+	struct wlan_objmgr_vdev *sta_vdev;
+	uint8_t sta_vdev_id;
+	enum hw_mode_bandwidth ch_wd;
+	uint8_t country[CDS_COUNTRY_CODE_LEN + 1];
+	uint32_t ap_pwr_type_6g = 0;
+	bool indoor_ch_support = false;
+
+	if (!mac_ctx || !mac_ctx->psoc || !mac_ctx->pdev)
+		return false;
+
+	if (!policy_mgr_is_sta_present_on_freq(mac_ctx->psoc, &sta_vdev_id,
+					       sap_freq, &ch_wd)) {
+		return false;
+	}
+
+	sta_vdev = wlan_objmgr_get_vdev_by_id_from_psoc(mac_ctx->psoc,
+							sta_vdev_id,
+							WLAN_LEGACY_SAP_ID);
+	if (!sta_vdev)
+		return false;
+
+	ap_pwr_type_6g = wlan_mlme_get_6g_ap_power_type(sta_vdev);
+
+	wlan_objmgr_vdev_release_ref(sta_vdev, WLAN_LEGACY_SAP_ID);
+
+	if (ap_pwr_type_6g == REG_VERY_LOW_POWER_AP)
+		return false;
+	ucfg_mlme_get_indoor_channel_support(mac_ctx->psoc, &indoor_ch_support);
+
+	if (ap_pwr_type_6g == REG_INDOOR_AP && indoor_ch_support) {
+		sap_debug("STA is connected to Indoor AP and indoor concurrency is supported");
+		return false;
+	}
+
+	wlan_reg_read_current_country(mac_ctx->psoc, country);
+	if (!wlan_reg_ctry_support_vlp(country)) {
+		sap_debug("Device country doesn't support VLP");
+		return false;
+	}
+
+	return !wlan_reg_is_freq_indoor(mac_ctx->pdev, sap_freq);
+}
+
 /**
  * sap_goto_starting() - Trigger softap start
  * @sap_ctx: SAP context
@@ -2792,6 +2856,12 @@ static QDF_STATUS sap_goto_starting(struct sap_context *sap_ctx,
 		qdf_status = sap_validate_dfs_nol(sap_ctx, mac_ctx);
 		if (!QDF_IS_STATUS_SUCCESS(qdf_status))
 			return qdf_status;
+	} else if (!policy_mgr_get_ap_6ghz_capable(mac_ctx->psoc,
+						   sap_ctx->sessionId, NULL)) {
+		return QDF_STATUS_E_FAILURE;
+	} else if (wlansap_is_power_change_required(mac_ctx,
+						    sap_ctx->chan_freq)) {
+		wlan_set_tpc_update_required_for_sta(sap_ctx->vdev, true);
 	}
 
 	/*

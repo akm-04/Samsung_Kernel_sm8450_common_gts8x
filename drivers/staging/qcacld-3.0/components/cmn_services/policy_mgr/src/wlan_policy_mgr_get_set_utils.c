@@ -2365,12 +2365,15 @@ QDF_STATUS policy_mgr_check_conn_with_mode_and_vdev_id(
 	return qdf_status;
 }
 
-void policy_mgr_soc_set_dual_mac_cfg_cb(enum set_hw_mode_status status,
-		uint32_t scan_config,
-		uint32_t fw_mode_config)
+void policy_mgr_soc_set_dual_mac_cfg_cb(struct wlan_objmgr_psoc *psoc,
+					enum set_hw_mode_status status,
+					uint32_t scan_config,
+					uint32_t fw_mode_config)
 {
 	policy_mgr_debug("Status:%d for scan_config:%x fw_mode_config:%x",
 			 status, scan_config, fw_mode_config);
+
+	policy_mgr_dual_mac_configuration_complete(psoc);
 }
 
 void policy_mgr_set_dual_mac_scan_config(struct wlan_objmgr_psoc *psoc,
@@ -2901,8 +2904,8 @@ void policy_mgr_incr_active_session(struct wlan_objmgr_psoc *psoc,
 	    (policy_mgr_mode_specific_connection_count(psoc,
 						       PM_NDI_MODE,
 						       NULL) > 0)) {
-		if (pm_ctx->dp_cbacks.hdd_rx_handle_concurrency)
-			pm_ctx->dp_cbacks.hdd_rx_handle_concurrency(true);
+		if (pm_ctx->dp_cbacks.hdd_disable_rx_ol_in_concurrency)
+			pm_ctx->dp_cbacks.hdd_disable_rx_ol_in_concurrency(true);
 	};
 
 	/* Enable RPS if SAP interface has come up */
@@ -2996,8 +2999,8 @@ QDF_STATUS policy_mgr_decr_active_session(struct wlan_objmgr_psoc *psoc,
 	     (policy_mgr_mode_specific_connection_count(psoc,
 							PM_NDI_MODE,
 							NULL) == 0))) {
-		if (pm_ctx->dp_cbacks.hdd_rx_handle_concurrency)
-			pm_ctx->dp_cbacks.hdd_rx_handle_concurrency(false);
+		if (pm_ctx->dp_cbacks.hdd_disable_rx_ol_in_concurrency)
+			pm_ctx->dp_cbacks.hdd_disable_rx_ol_in_concurrency(false);
 	};
 
 	/* Disable RPS if SAP interface has come up */
@@ -4787,6 +4790,35 @@ static bool policy_mgr_is_three_connection_mcc(void)
 		 WLAN_REG_MAX_24GHZ_CHAN_FREQ)) ? true : false;
 }
 
+uint32_t policy_mgr_get_conc_vdev_on_same_mac(struct wlan_objmgr_psoc *psoc,
+					      uint32_t vdev_id, uint8_t mac_id)
+{
+	uint32_t id = WLAN_INVALID_VDEV_ID;
+	uint32_t conn_index;
+	struct policy_mgr_psoc_priv_obj *pm_ctx;
+
+	pm_ctx = policy_mgr_get_context(psoc);
+	if (!pm_ctx) {
+		policy_mgr_err("Invalid Context");
+		return id;
+	}
+
+	qdf_mutex_acquire(&pm_ctx->qdf_conc_list_lock);
+	for (conn_index = 0; conn_index < MAX_NUMBER_OF_CONC_CONNECTIONS;
+	     conn_index++) {
+		if ((pm_conc_connection_list[conn_index].in_use) &&
+		    (pm_conc_connection_list[conn_index].vdev_id != vdev_id) &&
+		    (pm_conc_connection_list[conn_index].mac == mac_id)) {
+			id = pm_conc_connection_list[conn_index].vdev_id;
+			break;
+		}
+	}
+
+	qdf_mutex_release(&pm_ctx->qdf_conc_list_lock);
+
+	return id;
+}
+
 bool policy_mgr_is_mcc_in_24G(struct wlan_objmgr_psoc *psoc)
 {
 	uint32_t num_connections = 0;
@@ -6046,6 +6078,35 @@ bool policy_mgr_is_sta_connected_2g(struct wlan_objmgr_psoc *psoc)
 	return ret;
 }
 
+bool
+policy_mgr_is_connected_sta_5g(struct wlan_objmgr_psoc *psoc, qdf_freq_t *freq)
+{
+	struct policy_mgr_psoc_priv_obj *pm_ctx;
+	uint32_t conn_index;
+	bool ret = false;
+
+	pm_ctx = policy_mgr_get_context(psoc);
+	if (!pm_ctx) {
+		policy_mgr_err("Invalid Context");
+		return ret;
+	}
+
+	qdf_mutex_acquire(&pm_ctx->qdf_conc_list_lock);
+	for (conn_index = 0; conn_index < MAX_NUMBER_OF_CONC_CONNECTIONS;
+	     conn_index++) {
+		*freq = pm_conc_connection_list[conn_index].freq;
+		if (pm_conc_connection_list[conn_index].mode == PM_STA_MODE &&
+		    WLAN_REG_IS_5GHZ_CH_FREQ(*freq) &&
+		    pm_conc_connection_list[conn_index].in_use) {
+			ret = true;
+			break;
+		}
+	}
+	qdf_mutex_release(&pm_ctx->qdf_conc_list_lock);
+
+	return ret;
+}
+
 uint32_t policy_mgr_get_connection_info(struct wlan_objmgr_psoc *psoc,
 					struct connection_info *info)
 {
@@ -6573,11 +6634,14 @@ bool policy_mgr_is_restart_sap_required(struct wlan_objmgr_psoc *psoc,
 		if (connection[i].freq != freq &&
 		    policy_mgr_are_2_freq_on_same_mac(psoc, freq,
 						      connection[i].freq)) {
+			policy_mgr_debug("SAP:%d and STA:%d on same mac. Restart SAP ",
+					 freq, connection[i].freq);
 			restart_required = true;
 			break;
 		}
 		if (connection[i].freq == freq &&
 		    !sta_sap_scc_on_dfs_chan && sap_on_dfs) {
+			policy_mgr_debug("Move SAP out of DFS ch:%d", freq);
 			restart_required = true;
 			break;
 		}

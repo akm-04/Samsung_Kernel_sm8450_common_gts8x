@@ -143,6 +143,7 @@ void lim_update_assoc_sta_datas(struct mac_context *mac_ctx,
 	tDot11fIEhe_cap *he_cap = NULL;
 	tDot11fIEeht_cap *eht_cap = NULL;
 	struct bss_description *bss_desc = NULL;
+	tDot11fIEVHTOperation *vht_oper = NULL;
 
 	lim_get_phy_mode(mac_ctx, &phy_mode, session_entry);
 	sta_ds->staType = STA_ENTRY_SELF;
@@ -159,10 +160,13 @@ void lim_update_assoc_sta_datas(struct mac_context *mac_ctx,
 		lim_update_stads_htcap(mac_ctx, sta_ds, assoc_rsp,
 				       session_entry);
 
-	if (assoc_rsp->VHTCaps.present)
+	if (assoc_rsp->VHTCaps.present) {
 		vht_caps = &assoc_rsp->VHTCaps;
-	else if (assoc_rsp->vendor_vht_ie.VHTCaps.present)
+		vht_oper = &assoc_rsp->VHTOperation;
+	} else if (assoc_rsp->vendor_vht_ie.VHTCaps.present) {
 		vht_caps = &assoc_rsp->vendor_vht_ie.VHTCaps;
+		vht_oper = &assoc_rsp->vendor_vht_ie.VHTOperation;
+	}
 
 	if (session_entry->vhtCapability && (vht_caps && vht_caps->present)) {
 		sta_ds->mlmStaContext.vhtCapability =
@@ -175,13 +179,16 @@ void lim_update_assoc_sta_datas(struct mac_context *mac_ctx,
 		 */
 		sta_ds->htMaxRxAMpduFactor = vht_caps->maxAMPDULenExp;
 		if (session_entry->htSupportedChannelWidthSet) {
-			if (assoc_rsp->VHTOperation.present)
+			if (vht_oper && vht_oper->present)
 				sta_ds->vhtSupportedChannelWidthSet =
-					assoc_rsp->VHTOperation.chanWidth;
+				       lim_get_vht_ch_width(vht_caps,
+							    vht_oper,
+							    &assoc_rsp->HTInfo);
 			else
 				sta_ds->vhtSupportedChannelWidthSet =
-					eHT_CHANNEL_WIDTH_40MHZ;
+					WNI_CFG_VHT_CHANNEL_WIDTH_20_40MHZ;
 		}
+
 		sta_ds->vht_mcs_10_11_supp = 0;
 		if (mac_ctx->mlme_cfg->vht_caps.vht_cap_info.
 		    vht_mcs_10_11_supp &&
@@ -297,6 +304,14 @@ void lim_update_assoc_sta_datas(struct mac_context *mac_ctx,
 	}
 	if (session_entry->limRmfEnabled)
 		sta_ds->rmfEnabled = 1;
+
+	if (session_entry->vhtCapability && assoc_rsp->oper_mode_ntf.present) {
+		/**
+		 * OMN IE is present in the Assoc response, but the channel
+		 * width/Rx NSS update will happen through the peer_assoc cmd.
+		 */
+		pe_debug("OMN IE is present in the assoc response frame");
+	}
 }
 
 /**
@@ -838,6 +853,7 @@ lim_process_assoc_rsp_frame(struct mac_context *mac_ctx, uint8_t *rx_pkt_info,
 	tLimMlmAssocCnf assoc_cnf;
 	tSchBeaconStruct *beacon;
 	uint8_t ap_nss;
+	uint16_t aid;
 	int8_t rssi;
 	QDF_STATUS status;
 	enum ani_akm_type auth_type;
@@ -1122,12 +1138,14 @@ lim_process_assoc_rsp_frame(struct mac_context *mac_ctx, uint8_t *rx_pkt_info,
 			      (assoc_rsp->status_code ? QDF_STATUS_E_FAILURE :
 			       QDF_STATUS_SUCCESS), assoc_rsp->status_code);
 
-	if (subtype != LIM_REASSOC)
+	if (subtype != LIM_REASSOC) {
+		aid = assoc_rsp->aid & 0x3FFF;
 		wlan_connectivity_mgmt_event((struct wlan_frame_hdr *)hdr,
 					     session_entry->vdev_id,
 					     assoc_rsp->status_code, 0, rssi,
-					     0, 0, 0,
+					     0, 0, 0, aid,
 					     WLAN_ASSOC_RSP);
+	}
 
 	ap_nss = lim_get_nss_supported_by_ap(&assoc_rsp->VHTCaps,
 					     &assoc_rsp->HTCaps,

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1811,7 +1811,7 @@ static QDF_STATUS sme_process_dual_mac_config_resp(struct mac_context *mac,
 			sme_err("Callback failed-Dual mac config is NULL");
 		} else {
 			sme_debug("Calling HDD callback for Dual mac config");
-			callback(param->status,
+			callback(mac->psoc, param->status,
 				command->u.set_dual_mac_cmd.scan_config,
 				command->u.set_dual_mac_cmd.fw_mode_config);
 		}
@@ -2497,8 +2497,14 @@ sme_process_twt_resume_dialog_event(
 		struct wmi_twt_resume_dialog_complete_event_param *param)
 {
 	twt_resume_dialog_cb callback;
+#ifdef SEC_CONFIG_TWT
+	twt_del_dialog_cb twt_del_callback;
+#endif
 	QDF_STATUS qdf_status = QDF_STATUS_E_FAILURE;
 	enum QDF_OPMODE opmode;
+#ifdef SEC_CONFIG_TWT
+	struct wmi_twt_del_dialog_complete_event_param del_param = {0};
+#endif
 
 	opmode = wlan_get_opmode_from_vdev_id(mac->pdev, param->vdev_id);
 
@@ -2527,6 +2533,19 @@ sme_process_twt_resume_dialog_event(
 					mac->psoc, (struct qdf_mac_addr *)
 					param->peer_macaddr, param->dialog_id,
 					WLAN_TWT_NONE);
+
+#ifdef SEC_CONFIG_TWT
+		if (param->status == WMI_HOST_RESUME_TWT_STATUS_NO_ACK) {
+			del_param.vdev_id = param->vdev_id;
+			del_param.dialog_id = param->dialog_id;
+			del_param.status = WMI_HOST_DEL_TWT_STATUS_NO_ACK;
+			qdf_mem_copy(del_param.peer_macaddr,
+				     param->peer_macaddr, QDF_MAC_ADDR_SIZE);
+			twt_del_callback = mac->sme.twt_del_dialog_cb;
+			if (twt_del_callback)
+				twt_del_callback(mac->psoc, &del_param);
+		}
+#endif
 		break;
 	default:
 		sme_debug("TWT Resume is not supported on %s",
@@ -7529,14 +7548,64 @@ sme_del_periodic_tx_ptrn(mac_handle_t mac_handle,
 	return status;
 }
 
+#ifdef MULTI_CLIENT_LL_SUPPORT
+QDF_STATUS sme_multi_client_ll_rsp_register_callback(mac_handle_t mac_handle,
+				void (*latency_level_event_handler_cb)
+				(const struct latency_level_data *event_data,
+				 uint8_t vdev_id))
+{
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	struct mac_context *mac = MAC_CONTEXT(mac_handle);
+
+	status = sme_acquire_global_lock(&mac->sme);
+	if (QDF_IS_STATUS_SUCCESS(status)) {
+		mac->sme.latency_level_event_handler_cb =
+				latency_level_event_handler_cb;
+		sme_release_global_lock(&mac->sme);
+	}
+
+	return status;
+}
+
+void sme_multi_client_ll_rsp_deregister_callback(mac_handle_t mac_handle)
+{
+	sme_multi_client_ll_rsp_register_callback(mac_handle, NULL);
+}
+
+/**
+ * sme_fill_multi_client_info() - Fill multi client info
+ * @param:latency leevel param
+ * @client_id_bitmap: bitmap for host clients
+ * @force_reset: force reset bit to clear latency level for all clients
+ *
+ * Return: none
+ */
+static void
+sme_fill_multi_client_info(struct wlm_latency_level_param *params,
+			   uint32_t client_id_bitmap, bool force_reset)
+{
+	params->client_id_bitmask = client_id_bitmap;
+	params->force_reset = force_reset;
+}
+#else
+static inline void
+sme_fill_multi_client_info(struct wlm_latency_level_param *params,
+			   uint32_t client_id_bitmap, bool force_reset)
+{
+}
+#endif
+
 QDF_STATUS sme_set_wlm_latency_level(mac_handle_t mac_handle,
-				     uint16_t session_id,
-				     uint16_t latency_level)
+				uint16_t session_id, uint16_t latency_level,
+				uint32_t client_id_bitmap,
+				bool force_reset)
 {
 	QDF_STATUS status;
 	struct mac_context *mac_ctx = MAC_CONTEXT(mac_handle);
 	struct wlm_latency_level_param params;
 	void *wma = cds_get_context(QDF_MODULE_ID_WMA);
+
+	SME_ENTER();
 
 	if (!wma)
 		return QDF_STATUS_E_FAILURE;
@@ -7556,6 +7625,7 @@ QDF_STATUS sme_set_wlm_latency_level(mac_handle_t mac_handle,
 	params.wlm_latency_flags =
 		mac_ctx->mlme_cfg->wlm_config.latency_flags[latency_level];
 	params.vdev_id = session_id;
+	sme_fill_multi_client_info(&params, client_id_bitmap, force_reset);
 
 	status = wma_set_wlm_latency_level(wma, &params);
 
@@ -14720,6 +14790,7 @@ QDF_STATUS sme_handle_sae_msg(mac_handle_t mac_handle,
 		sae_msg->length = sizeof(*sae_msg);
 		sae_msg->vdev_id = session_id;
 		sae_msg->sae_status = sae_status;
+		sae_msg->result_code = eSIR_SME_AUTH_REFUSED;
 		qdf_mem_copy(sae_msg->peer_mac_addr,
 			     peer_mac_addr.bytes,
 			     QDF_MAC_ADDR_SIZE);
@@ -16113,7 +16184,8 @@ static inline bool sme_is_11be_capable(void)
 
 QDF_STATUS sme_send_set_mac_addr(struct qdf_mac_addr mac_addr,
 				 struct qdf_mac_addr mld_addr,
-				 struct wlan_objmgr_vdev *vdev)
+				 struct wlan_objmgr_vdev *vdev,
+				 bool update_mld_addr)
 {
 	enum QDF_OPMODE vdev_opmode;
 	struct qdf_mac_addr vdev_mac_addr = mac_addr;
@@ -16133,7 +16205,8 @@ QDF_STATUS sme_send_set_mac_addr(struct qdf_mac_addr mac_addr,
 			return qdf_ret_status;
 	}
 
-	if (sme_is_11be_capable() && (vdev_opmode == QDF_STA_MODE)) {
+	if ((vdev_opmode == QDF_STA_MODE) &&
+	    sme_is_11be_capable() && update_mld_addr) {
 		/* Set new MAC addr as MLD address incase of MLO */
 		mld_addr = mac_addr;
 		qdf_mem_copy(&vdev_mac_addr, wlan_vdev_mlme_get_linkaddr(vdev),
@@ -16171,7 +16244,8 @@ QDF_STATUS sme_send_set_mac_addr(struct qdf_mac_addr mac_addr,
 QDF_STATUS sme_update_vdev_mac_addr(struct wlan_objmgr_psoc *psoc,
 				    struct qdf_mac_addr mac_addr,
 				    struct wlan_objmgr_vdev *vdev,
-				    bool update_sta_self_peer, int req_status)
+				    bool update_sta_self_peer,
+				    bool update_mld_addr, int req_status)
 {
 	enum QDF_OPMODE vdev_opmode;
 	uint8_t *old_mac_addr_bytes;
@@ -16190,7 +16264,7 @@ QDF_STATUS sme_update_vdev_mac_addr(struct wlan_objmgr_psoc *psoc,
 		goto p2p_self_peer_create;
 
 	if ((vdev_opmode == QDF_STA_MODE) && update_sta_self_peer) {
-		if (sme_is_11be_capable())
+		if (sme_is_11be_capable() && update_mld_addr)
 			old_mac_addr_bytes = wlan_vdev_mlme_get_mldaddr(vdev);
 		else
 			old_mac_addr_bytes = wlan_vdev_mlme_get_macaddr(vdev);
@@ -16216,7 +16290,8 @@ QDF_STATUS sme_update_vdev_mac_addr(struct wlan_objmgr_psoc *psoc,
 	}
 
 	/* Update VDEV MAC address */
-	if ((vdev_opmode == QDF_STA_MODE) && sme_is_11be_capable()) {
+	if ((vdev_opmode == QDF_STA_MODE)
+	    && sme_is_11be_capable() && update_mld_addr) {
 		if (update_sta_self_peer) {
 			qdf_ret_status = wlan_mlo_mgr_update_mld_addr(
 					    (struct qdf_mac_addr *)
@@ -16228,6 +16303,7 @@ QDF_STATUS sme_update_vdev_mac_addr(struct wlan_objmgr_psoc *psoc,
 		wlan_vdev_mlme_set_mldaddr(vdev, mac_addr.bytes);
 	} else {
 		wlan_vdev_mlme_set_macaddr(vdev, mac_addr.bytes);
+		wlan_vdev_mlme_set_linkaddr(vdev, mac_addr.bytes);
 	}
 
 p2p_self_peer_create:

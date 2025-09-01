@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -581,6 +581,44 @@ QDF_STATUS sme_roam_disconnect_sta(mac_handle_t mac_handle, uint8_t sessionId,
 		struct csr_del_sta_params *p_del_sta_params);
 QDF_STATUS sme_roam_deauth_sta(mac_handle_t mac_handle, uint8_t sessionId,
 		struct csr_del_sta_params *pDelStaParams);
+
+#ifdef MULTI_CLIENT_LL_SUPPORT
+/**
+ * sme_multi_client_ll_rsp_register_callback() - Register multi client low
+ * latency callback
+ * @mac_handle: Opaque handle to the MAC context
+ * @latency_level_event_handler_cb: Function to be invoked for low latency
+ * event
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS sme_multi_client_ll_rsp_register_callback(mac_handle_t mac_handle,
+				void (*latency_level_event_handler_cb)
+				(const struct latency_level_data *event_data,
+				 uint8_t vdev_id));
+
+/**
+ * sme_multi_client_ll_rsp_deregister_callback() - De Register multi client
+ * low latency callback
+ * @mac_handle: Opaque handle to the MAC context
+ *
+ * Return: void
+ */
+void sme_multi_client_ll_rsp_deregister_callback(mac_handle_t mac_handle);
+#else
+static inline QDF_STATUS
+sme_multi_client_ll_rsp_register_callback(mac_handle_t mac_handle,
+				void (*latency_level_event_handler_cb)
+				(const void *event_data,
+				 uint8_t vdev_id))
+{
+	return QDF_STATUS_E_FAILURE;
+}
+
+static inline
+void sme_multi_client_ll_rsp_deregister_callback(mac_handle_t mac_handle)
+{}
+#endif
 
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
 /**
@@ -1228,16 +1266,20 @@ QDF_STATUS sme_send_rate_update_ind(mac_handle_t mac_handle,
 void sme_get_command_q_status(mac_handle_t mac_handle);
 
 /**
- * sme_set_wlm_latency_level_ind() - Used to set the latency level to fw
- * @mac_handle
- * @session_id
- * @latency_level
+ * sme_set_wlm_latency_level() - Used to set the latency level to fw
+ * @mac_handle: mac handle
+ * @vdev_id: vdev id
+ * @latency_level: latency level to be set in FW
+ * @client_id_bitmap: client id bitmap
+ * @force_reset: flag to reset latency level
  *
  * Return QDF_STATUS
  */
 QDF_STATUS sme_set_wlm_latency_level(mac_handle_t mac_handle,
-				     uint16_t session_id,
-				     uint16_t latency_level);
+				uint16_t vdev_id, uint16_t latency_level,
+				uint32_t client_id_bitmap,
+				bool force_reset);
+
 /*
  * SME API to enable/disable idle mode powersave
  * This should be called only if powersave offload
@@ -4518,6 +4560,7 @@ QDF_STATUS sme_switch_channel(mac_handle_t mac_handle,
  * @mac_addr: VDEV MAC address
  * @mld_addr: VDEV MLD address
  * @vdev: Pointer to object manager VDEV
+ * @update_mld_addr: Flag to check whether to update MLD addr or no
  *
  * API to send set MAC address request command to FW
  *
@@ -4525,7 +4568,8 @@ QDF_STATUS sme_switch_channel(mac_handle_t mac_handle,
  */
 QDF_STATUS sme_send_set_mac_addr(struct qdf_mac_addr mac_addr,
 				 struct qdf_mac_addr mld_addr,
-				 struct wlan_objmgr_vdev *vdev);
+				 struct wlan_objmgr_vdev *vdev,
+				 bool update_mld_addr);
 
 /**
  * sme_update_vdev_mac_addr() - Update VDEV MAC address
@@ -4533,6 +4577,7 @@ QDF_STATUS sme_send_set_mac_addr(struct qdf_mac_addr mac_addr,
  * @mac_addr: VDEV MAC address
  * @vdev: Pointer to object manager VDEV
  * @update_sta_self_peer: Flag to check self peer MAC address or not.
+ * @update_mld_addr: Flag to check if MLD address update needed or not.
  * @req_status: Status of the set MAC address request to the FW
  *
  * API to update MLME structures with new MAC address. This will be invoked
@@ -4544,7 +4589,8 @@ QDF_STATUS sme_send_set_mac_addr(struct qdf_mac_addr mac_addr,
 QDF_STATUS sme_update_vdev_mac_addr(struct wlan_objmgr_psoc *psoc,
 				    struct qdf_mac_addr mac_addr,
 				    struct wlan_objmgr_vdev *vdev,
-				    bool update_sta_self_peer, int req_status);
+				    bool update_sta_self_peer,
+				    bool update_mld_addr, int req_status);
 #endif
 
 #endif /* #if !defined( __SME_API_H ) */

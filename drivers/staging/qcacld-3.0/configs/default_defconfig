@@ -424,6 +424,9 @@ CONFIG_ADAPTIVE_11R := y
 #Flag to enable sae single pmk feature
 CONFIG_SAE_SINGLE_PMK := y
 
+#Flag to enable/disable multi client low latency feature support
+CONFIG_MULTI_CLIENT_LL_SUPPORT := y
+
 #Flag to enable mscs feature
 CONFIG_FEATURE_MSCS := y
 
@@ -748,6 +751,14 @@ else ifeq ($(CONFIG_PERF_DEBUG), y)
 else
 	PANIC_ON_BUG := n
 	WLAN_WARN_ON_ASSERT := n
+endif
+
+# Case 05940062 : SS request add disable PANIC_ON_BUG in USER build as SS specific.
+CONFIG_WLAN_SAMSUNG_FEATURE=y
+ifeq ($(CONFIG_WLAN_SAMSUNG_FEATURE), y)
+	ifeq ($(TARGET_BUILD_VARIANT),user)
+		PANIC_ON_BUG := n
+	endif
 endif
 
 # Compile all log levels by default
@@ -1126,8 +1137,6 @@ CONFIG_FEATURE_INTEROP_ISSUES_AP := y
 
 CONFIG_FEATURE_WLAN_WAPI := y
 
-CONFIG_AGEIE_ON_SCAN_RESULTS := y
-
 #Flag to enable FW log parsing support feature
 CONFIG_FEATURE_FW_LOG_PARSING := y
 
@@ -1278,6 +1287,7 @@ ifeq (y,$(filter y,$(CONFIG_LITHIUM) $(CONFIG_BERYLLIUM)))
 		CONFIG_QDF_NBUF_HISTORY_SIZE := 8192
 		CONFIG_DP_RX_REFILL_CPU_PERF_AFFINE_MASK := y
 	endif
+	CONFIG_DP_HW_TX_DELAY_STATS_ENABLE := y
 	CONFIG_WLAN_FEATURE_DP_EVENT_HISTORY := y
 	CONFIG_ALLOW_PKT_DROPPING := y
 	CONFIG_DYNAMIC_RX_AGGREGATION := y
@@ -1461,11 +1471,11 @@ endif
 #Enable Hang Event
 CONFIG_WLAN_HANG_EVENT := y
 
-ifeq ($(CONFIG_CNSS_QCA6750), y)
 ifeq ($(CONFIG_FW_THERMAL_THROTTLE), y)
 CONFIG_WLAN_THERMAL_MULTI_CLIENT_SUPPORT := y
 endif
 
+ifeq ($(CONFIG_CNSS_QCA6750), y)
 ifeq ($(CONFIG_LITHIUM), y)
 CONFIG_DP_LEGACY_MODE_CSM_DEFAULT_DISABLE := 1
 CONFIG_DP_RX_DESC_COOKIE_INVALIDATE := y
@@ -1487,3 +1497,6 @@ endif
 ifeq ($(CONFIG_LITHIUM), y)
 CONFIG_DP_TX_TRACKING := y
 endif
+
+#Flag to enable Dynamic MAC address update
+CONFIG_WLAN_FEATURE_DYNAMIC_MAC_ADDR_UPDATE := y

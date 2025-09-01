@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2512-2518 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -32,9 +32,20 @@
 #define QWLAN_VERSION_MAJOR            2
 #define QWLAN_VERSION_MINOR            0
 #define QWLAN_VERSION_PATCH            9
-#define QWLAN_VERSION_EXTRA            "D"
-#define QWLAN_VERSION_BUILD            8
+#if defined(QCA_WIFI_QCA6390) //Hastings
+#define QWLAN_VERSION_EXTRA            "-HP240722A"
+#elif defined(QCA_WIFI_QCA6490) // Hastings Prime
+#define QWLAN_VERSION_EXTRA            "-HP240722A"
+#else
+#define QWLAN_VERSION_EXTRA            "-QCOM"
+#endif
+#define QWLAN_VERSION_BUILD            253
 
-#define QWLAN_VERSIONSTR               "2.0.9.8D"
-
+#if defined(QCA_WIFI_QCA6390) //Hastings
+#define QWLAN_VERSIONSTR               "2.0.9.9-HS240722A"
+#elif defined(QCA_WIFI_QCA6490) // Hastings Prime
+#define QWLAN_VERSIONSTR               "2.0.9.9-HP240722A"
+#else
+#define QWLAN_VERSIONSTR               "2.0.9.9-QCOM"
+#endif
 #endif /* QWLAN_VERSION_H */

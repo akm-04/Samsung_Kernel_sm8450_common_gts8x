@@ -29,6 +29,10 @@
 #include "wlan_ipa_obj_mgmt_api.h"
 #include "wlan_pmo_icmp.h"
 
+#ifdef SEC_CONFIG_PSM_SYSFS
+extern int wlan_hdd_sec_get_psm(void);
+#endif /* SEC_CONFIG_PSM_SYSFS */
+
 static struct wlan_pmo_ctx *gp_pmo_ctx;
 
 QDF_STATUS pmo_allocate_ctx(void)
@@ -291,6 +295,12 @@ static void wlan_pmo_init_cfg(struct wlan_objmgr_psoc *psoc,
 	psoc_cfg->disconnect_sap_tdls_in_wow =
 			cfg_get(psoc, CFG_DISCONNECT_SAP_TDLS_IN_WOW);
 	wlan_pmo_get_icmp_offload_enable_cfg(psoc, psoc_cfg);
+#ifdef SEC_CONFIG_PSM_SYSFS
+	if (wlan_hdd_sec_get_psm()) {
+		psoc_cfg->arp_offload_enable = 0;
+		printk("[WIFI] CFG_PMO_ENABLE_HOST_ARPOFFLOAD : sec_control_psm = %d", psoc_cfg->arp_offload_enable);
+	}
+#endif /* SEC_CONFIG_PSM_SYSFS */
 }
 
 QDF_STATUS pmo_psoc_open(struct wlan_objmgr_psoc *psoc)

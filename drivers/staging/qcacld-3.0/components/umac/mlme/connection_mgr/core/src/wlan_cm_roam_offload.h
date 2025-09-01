@@ -149,6 +149,23 @@ void cm_handle_sta_sta_roaming_enablement(struct wlan_objmgr_psoc *psoc,
 					  uint8_t curr_vdev_id);
 
 /**
+ * cm_handle_sta_sta_roaming_enablement() - To handle roaming in case
+ * of STA + STA
+ * @psoc: psoc common object
+ * @curr_vdev_id: Vdev id
+ *
+ * This function is to process STA + STA concurrency scenarios after roaming
+ * and take care of following:
+ * 1. Set PCL to vdev/pdev as per DBS, SCC or MCC
+ * 2. Enable/disable roaming based on the concurrency (DBS vs SCC/MCC) after
+ * roaming
+ *
+ * Return: none
+ */
+void cm_handle_sta_sta_roaming_enablement(struct wlan_objmgr_psoc *psoc,
+					  uint8_t curr_vdev_id);
+
+/**
  * cm_roam_send_rso_cmd() - send rso command
  * @psoc: psoc pointer
  * @vdev_id: vdev id
@@ -347,11 +364,14 @@ cm_store_sae_single_pmk_to_global_cache(struct wlan_objmgr_psoc *psoc,
  * with same pmk or not
  * @psoc: psoc
  * @vdev_id: vdev id
+ * @psk_pmk: pmk of roamed AP
+ * @pmk_len: pml length
  *
  * Return: void
  */
 void cm_check_and_set_sae_single_pmk_cap(struct wlan_objmgr_psoc *psoc,
-					 uint8_t vdev_id);
+					 uint8_t vdev_id, uint8_t *psk_pmk,
+					 uint8_t pmk_len);
 #else
 static inline void
 cm_store_sae_single_pmk_to_global_cache(struct wlan_objmgr_psoc *psoc,
@@ -360,7 +380,8 @@ cm_store_sae_single_pmk_to_global_cache(struct wlan_objmgr_psoc *psoc,
 {}
 static inline void
 cm_check_and_set_sae_single_pmk_cap(struct wlan_objmgr_psoc *psoc,
-				    uint8_t vdev_id)
+				    uint8_t vdev_id, uint8_t *psk_pmk,
+				    uint8_t pmk_len)
 {}
 #endif
 

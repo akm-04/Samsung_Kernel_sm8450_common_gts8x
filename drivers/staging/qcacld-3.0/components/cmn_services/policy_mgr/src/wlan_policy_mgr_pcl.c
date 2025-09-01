@@ -901,6 +901,107 @@ policy_mgr_modify_pcl_based_on_indoor(struct wlan_objmgr_psoc *psoc,
 	return QDF_STATUS_SUCCESS;
 }
 
+/**
+ * policy_mgr_modify_sap_pcl_for_6G_channels() - filter out the
+ * 6GHz channels where SCC is not supported.
+ * @psoc: pointer to soc
+ * @pcl_list_org: channel list to filter out
+ * @weight_list_org: weight of channel list
+ * @pcl_len_org: length of channel list
+ *
+ * Return: QDF_STATUS
+ */
+static QDF_STATUS
+policy_mgr_modify_sap_pcl_for_6G_channels(struct wlan_objmgr_psoc *psoc,
+					  uint32_t *pcl_list_org,
+					  uint8_t *weight_list_org,
+					  uint32_t *pcl_len_org)
+{
+	struct policy_mgr_psoc_priv_obj *pm_ctx;
+	uint32_t pcl_list[NUM_CHANNELS];
+	uint8_t weight_list[NUM_CHANNELS];
+	uint32_t vdev_id = 0, pcl_len = 0, i;
+	struct wlan_objmgr_vdev *vdev;
+	qdf_freq_t sta_gc_freq = 0;
+	uint32_t ap_pwr_type_6g = 0;
+	bool indoor_ch_support = false;
+
+	pm_ctx = policy_mgr_get_context(psoc);
+	if (!pm_ctx) {
+		policy_mgr_err("Invalid Context");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (*pcl_len_org > NUM_CHANNELS) {
+		policy_mgr_err("Invalid PCL List Length %d", *pcl_len_org);
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (policy_mgr_mode_specific_connection_count(psoc,
+						      PM_STA_MODE, NULL)) {
+		sta_gc_freq =
+			policy_mgr_mode_specific_get_channel(psoc, PM_STA_MODE);
+		vdev_id = policy_mgr_mode_specific_vdev_id(psoc, PM_STA_MODE);
+	} else if (policy_mgr_mode_specific_connection_count(psoc,
+							     PM_P2P_CLIENT_MODE,
+							     NULL)) {
+		sta_gc_freq = policy_mgr_mode_specific_get_channel(
+						psoc, PM_P2P_CLIENT_MODE);
+		vdev_id = policy_mgr_mode_specific_vdev_id(psoc,
+							   PM_P2P_CLIENT_MODE);
+	}
+
+	if (!sta_gc_freq || !WLAN_REG_IS_6GHZ_CHAN_FREQ(sta_gc_freq))
+		return QDF_STATUS_SUCCESS;
+
+	vdev = wlan_objmgr_get_vdev_by_id_from_psoc(psoc, vdev_id,
+						    WLAN_POLICY_MGR_ID);
+	if (!vdev) {
+		policy_mgr_err("vdev %d is not present", vdev_id);
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	/* If STA is present in 6GHz PSC, STA+SAP SCC is allowed
+	 * only for the following combinations:
+	 *
+	 * VLP STA + SAP - Allowed with VLP Power
+	 * LPI STA + SAP - Allowed with VLP power if channel supports VLP.
+	 * LPI STA + SAP - Allowed with LPI power if gindoor_channel_support=1
+	 */
+	ap_pwr_type_6g = wlan_mlme_get_6g_ap_power_type(vdev);
+	policy_mgr_debug("STA power type : %d", ap_pwr_type_6g);
+
+	ucfg_mlme_get_indoor_channel_support(psoc, &indoor_ch_support);
+
+	for (i = 0; i < *pcl_len_org; i++) {
+		if (WLAN_REG_IS_6GHZ_CHAN_FREQ(pcl_list_org[i])) {
+			if (!WLAN_REG_IS_6GHZ_PSC_CHAN_FREQ(pcl_list_org[i]))
+				continue;
+			if (ap_pwr_type_6g == REG_VERY_LOW_POWER_AP)
+				goto add_freq;
+			else if (ap_pwr_type_6g == REG_INDOOR_AP &&
+				 (!wlan_reg_is_freq_indoor(pm_ctx->pdev,
+							   pcl_list_org[i]) ||
+				  indoor_ch_support))
+				goto add_freq;
+			else
+				continue;
+		}
+add_freq:
+		pcl_list[pcl_len] = pcl_list_org[i];
+		weight_list[pcl_len++] = weight_list_org[i];
+	}
+
+	qdf_mem_zero(pcl_list_org, *pcl_len_org * sizeof(*pcl_list_org));
+	qdf_mem_zero(weight_list_org, *pcl_len_org * sizeof(*weight_list_org));
+	qdf_mem_copy(pcl_list_org, pcl_list, pcl_len * sizeof(*pcl_list_org));
+	qdf_mem_copy(weight_list_org, weight_list, pcl_len);
+	*pcl_len_org = pcl_len;
+
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_POLICY_MGR_ID);
+	return QDF_STATUS_SUCCESS;
+}
+
 static QDF_STATUS policy_mgr_pcl_modification_for_sap(
 			struct wlan_objmgr_psoc *psoc,
 			uint32_t *pcl_channels, uint8_t *pcl_weight,
@@ -960,6 +1061,14 @@ static QDF_STATUS policy_mgr_pcl_modification_for_sap(
 		return status;
 	}
 	indoor_modified_pcl = true;
+
+	status = policy_mgr_modify_sap_pcl_for_6G_channels(psoc,
+							   pcl_channels,
+							   pcl_weight, len);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		policy_mgr_err("failed to modify pcl for 6G channels");
+		return status;
+	}
 
 	modified_final_pcl = true;
 	policy_mgr_debug(" %d %d %d %d %d",
@@ -1195,6 +1304,8 @@ QDF_STATUS policy_mgr_get_pcl(struct wlan_objmgr_psoc *psoc,
 		return status;
 	}
 
+	policy_mgr_debug("PCL before modification");
+	policy_mgr_dump_channel_list(*len, pcl_channels, pcl_weight);
 	policy_mgr_mode_specific_modification_on_pcl(
 		psoc, pcl_channels, pcl_weight, len, mode);
 
@@ -1205,6 +1316,8 @@ QDF_STATUS policy_mgr_get_pcl(struct wlan_objmgr_psoc *psoc,
 		policy_mgr_err("failed to get modified pcl based on DNBS");
 		return status;
 	}
+
+	policy_mgr_debug("PCL after modification");
 	policy_mgr_dump_channel_list(*len, pcl_channels, pcl_weight);
 
 	return QDF_STATUS_SUCCESS;
@@ -2453,6 +2566,11 @@ QDF_STATUS policy_mgr_modify_sap_pcl_based_on_mandatory_channel(
 	uint32_t i, j, pcl_len = 0;
 	bool found;
 	struct policy_mgr_psoc_priv_obj *pm_ctx;
+	qdf_freq_t dfs_sta_freq = INVALID_CHANNEL_ID;
+	qdf_freq_t sta_5GHz_freq = INVALID_CHANNEL_ID;
+	enum hw_mode_bandwidth sta_ch_width;
+	uint8_t sta_vdev_id = 0, scc_on_dfs_channel = 0;
+	bool sta_sap_scc_on_5ghz_channel;
 
 	pm_ctx = policy_mgr_get_context(psoc);
 	if (!pm_ctx) {
@@ -2473,12 +2591,36 @@ QDF_STATUS policy_mgr_modify_sap_pcl_based_on_mandatory_channel(
 		policy_mgr_debug("fav chan:%d",
 			pm_ctx->sap_mandatory_channels[i]);
 
+	policy_mgr_get_sta_sap_scc_on_dfs_chnl(psoc, &scc_on_dfs_channel);
+	if (scc_on_dfs_channel)
+		policy_mgr_is_sta_present_on_dfs_channel(psoc,
+							 &sta_vdev_id,
+							 &dfs_sta_freq,
+							 &sta_ch_width);
+	sta_sap_scc_on_5ghz_channel =
+		policy_mgr_is_connected_sta_5g(psoc, &sta_5GHz_freq);
 	for (i = 0; i < *pcl_len_org; i++) {
 		found = false;
 		if (i >= NUM_CHANNELS) {
 			policy_mgr_debug("index is exceeding NUM_CHANNELS");
 			break;
 		}
+
+		if (scc_on_dfs_channel && policy_mgr_is_force_scc(psoc) &&
+		    pcl_list_org[i] == dfs_sta_freq) {
+			policy_mgr_debug("dfs chan:%d", pcl_list_org[i]);
+			found = true;
+			goto update_pcl;
+		}
+
+		if (sta_sap_scc_on_5ghz_channel &&
+		    policy_mgr_is_force_scc(psoc) &&
+		    pcl_list_org[i] == sta_5GHz_freq) {
+			policy_mgr_debug("scc chan:%d", pcl_list_org[i]);
+			found = true;
+			goto update_pcl;
+		}
+
 		for (j = 0; j < pm_ctx->sap_mandatory_channels_len; j++) {
 			if (pcl_list_org[i] ==
 			    pm_ctx->sap_mandatory_channels[j]) {
@@ -2486,6 +2628,7 @@ QDF_STATUS policy_mgr_modify_sap_pcl_based_on_mandatory_channel(
 				break;
 			}
 		}
+update_pcl:
 		if (found && (pcl_len < NUM_CHANNELS)) {
 			pcl_list_org[pcl_len] = pcl_list_org[i];
 			weight_list_org[pcl_len++] = weight_list_org[i];
