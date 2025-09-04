@@ -4867,11 +4867,7 @@ void rtl8xxxu_update_ra_report(struct rtl8xxxu_ra_report *rarpt,
 static void
 rtl8xxxu_bss_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 			  struct ieee80211_bss_conf *bss_conf, 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,9,17)
-			  u64 changed
-#else
 			  u32 changed
-#endif
 			  )
 {
 	struct rtl8xxxu_priv *priv = hw->priv;
@@ -4884,19 +4880,11 @@ rtl8xxxu_bss_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	rarpt = &priv->ra_report;
 
 	if (changed & BSS_CHANGED_ASSOC) {
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,9,17)
-		dev_dbg(dev, "Changed ASSOC: %i!\n", vif->cfg.assoc);
-#else
 		dev_dbg(dev, "Changed ASSOC: %i!\n", bss_conf->assoc);
-#endif
 
 		rtl8xxxu_set_linktype(priv, vif->type);
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,9,17)
-		if (vif->cfg.assoc) {
-#else
 		if (bss_conf->assoc) {
-#endif
 			u32 ramask;
 			int sgi = 0;
 			u8 highest_rate;
@@ -4973,11 +4961,7 @@ rtl8xxxu_bss_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 
 			/* joinbss sequence */
 			rtl8xxxu_write16(priv, REG_BCN_PSR_RPT,
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,9,17)
-					 0xc000 | vif->cfg.aid);
-#else
 					 0xc000 | vif->bss_conf.aid);
-#endif
 
 			priv->fops->report_connect(priv, 0, true);
 		} else {
@@ -5623,11 +5607,7 @@ static void rtl8xxxu_rx_parse_phystats(struct rtl8xxxu_priv *priv,
 		bool parse_cfo = priv->fops->set_crystal_cap &&
 				 priv->vif &&
 				 priv->vif->type == NL80211_IFTYPE_STATION &&
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,9,17)
-				 priv->vif->cfg.assoc &&
-#else
 				 priv->vif->bss_conf.assoc &&
-#endif
 				 !crc_icv_err &&
 				 !ieee80211_is_ctl(hdr->frame_control) &&
 				 ether_addr_equal(priv->vif->bss_conf.bssid, hdr->addr2);
@@ -5865,11 +5845,7 @@ void rtl8723bu_handle_bt_inquiry(struct rtl8xxxu_priv *priv)
 
 	vif = priv->vif;
 	btcoex = &priv->bt_coex;
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,9,17)
-	wifi_connected = (vif && vif->cfg.assoc);
-#else
 	wifi_connected = (vif && vif->bss_conf.assoc);
-#endif
 
 	if (!wifi_connected) {
 		rtl8723bu_set_ps_tdma(priv, 0x8, 0x0, 0x0, 0x0, 0x0);
@@ -5895,11 +5871,7 @@ void rtl8723bu_handle_bt_info(struct rtl8xxxu_priv *priv)
 
 	vif = priv->vif;
 	btcoex = &priv->bt_coex;
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,9,17)
-	wifi_connected = (vif && vif->cfg.assoc);
-#else
 	wifi_connected = (vif && vif->bss_conf.assoc);
-#endif
 	if (wifi_connected) {
 		u32 val32 = 0;
 		u32 high_prio_tx = 0, high_prio_rx = 0;
@@ -6985,11 +6957,7 @@ static void rtl8xxxu_track_cfo(struct rtl8xxxu_priv *priv)
 	struct rtl8xxxu_cfo_tracking *cfo = &priv->cfo_tracking;
 	int cfo_khz_a, cfo_khz_b, cfo_average;
 	int crystal_cap;
-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,9,17)
-	if (!priv->vif || !priv->vif->cfg.assoc) {
-#else
 	if (!priv->vif || !priv->vif->bss_conf.assoc) {
-#endif
 		/* Reset */
 		cfo->adjust = true;
 
