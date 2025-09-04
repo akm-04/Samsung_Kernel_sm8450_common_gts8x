@@ -1161,7 +1161,7 @@ void rtl8xxxu_gen1_config_channel(struct ieee80211_hw *hw)
 #endif
 		ht = false;
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5,3,18)
-		fallthrough;
+		// fall through
 #endif
 #if LINUX_VERSION_CODE > KERNEL_VERSION(3,9,11)
 	case NL80211_CHAN_WIDTH_20:
@@ -1315,7 +1315,7 @@ void rtl8xxxu_gen2_config_channel(struct ieee80211_hw *hw)
 #endif
 		ht = false;
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5,3,18)
-		fallthrough;
+		// fall through
 #endif
 #if LINUX_VERSION_CODE > KERNEL_VERSION(3,9,11)
 	case NL80211_CHAN_WIDTH_20:
@@ -1721,7 +1721,7 @@ void rtl8xxxu_config_endpoints_sie(struct rtl8xxxu_priv *priv)
 		priv->ep_tx_high_queue = 1;
 		priv->ep_tx_count++;
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5,3,18)
-		fallthrough;
+		// fall through
 #endif
 	}
 
@@ -1729,7 +1729,7 @@ void rtl8xxxu_config_endpoints_sie(struct rtl8xxxu_priv *priv)
 		priv->ep_tx_normal_queue = 1;
 		priv->ep_tx_count++;
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5,3,18)
-		fallthrough;
+		// fall through
 #endif
 	}
 
@@ -1749,13 +1749,13 @@ int rtl8xxxu_config_endpoints_no_sie(struct rtl8xxxu_priv *priv)
 		priv->ep_tx_low_queue = 1;
 		priv->ep_tx_count++;
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5,3,18)
-		fallthrough;
+		// fall through
 #endif
 	case 2:
 		priv->ep_tx_normal_queue = 1;
 		priv->ep_tx_count++;
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5,3,18)
-		fallthrough;
+		// fall through
 #endif
 	case 1:
 		priv->ep_tx_high_queue = 1;
@@ -6406,12 +6406,13 @@ static int rtl8xxxu_add_interface(struct ieee80211_hw *hw,
 	int ret;
 	u8 val8;
 
+	if (!priv->vif)
+		priv->vif = vif;
+	else
+		return -EOPNOTSUPP;
+
 	switch (vif->type) {
 	case NL80211_IFTYPE_STATION:
-		if (!priv->vif)
-			priv->vif = vif;
-		else
-			return -EOPNOTSUPP;
 		rtl8xxxu_stop_tx_beacon(priv);
 
 		val8 = rtl8xxxu_read8(priv, REG_BEACON_CTRL);
@@ -6420,11 +6421,33 @@ static int rtl8xxxu_add_interface(struct ieee80211_hw *hw,
 		rtl8xxxu_write8(priv, REG_BEACON_CTRL, val8);
 		ret = 0;
 		break;
+	case NL80211_IFTYPE_AP:
+		rtl8xxxu_write8(priv, REG_BEACON_CTRL,
+				BEACON_DISABLE_TSF_UPDATE | BEACON_CTRL_MBSSID);
+		rtl8xxxu_write8(priv, REG_ATIMWND, 0x0c); /* 12ms */
+		rtl8xxxu_write16(priv, REG_TSFTR_SYN_OFFSET, 0x7fff); /* ~32ms */
+		rtl8xxxu_write8(priv, REG_DUAL_TSF_RST, DUAL_TSF_RESET_TSF0);
+
+		/* enable BCN0 function */
+		rtl8xxxu_write8(priv, REG_BEACON_CTRL,
+				BEACON_DISABLE_TSF_UPDATE |
+				BEACON_FUNCTION_ENABLE | BEACON_CTRL_MBSSID |
+				BEACON_CTRL_TX_BEACON_RPT);
+
+		/* select BCN on port 0 */
+		val8 = rtl8xxxu_read8(priv, REG_CCK_CHECK);
+		val8 &= ~BIT_BCN_PORT_SEL;
+		rtl8xxxu_write8(priv, REG_CCK_CHECK, val8);
+
+		ret = 0;
+		break;
 	default:
 		ret = -EOPNOTSUPP;
 	}
 
 	rtl8xxxu_set_linktype(priv, vif->type);
+	ether_addr_copy(priv->mac_addr, vif->addr);
+	rtl8xxxu_set_mac(priv);
 
 	return ret;
 }
@@ -6736,7 +6759,7 @@ enum ieee80211_ampdu_mlme_action action, struct ieee80211_sta *sta, u16 tid, u16
 			"Changed HT: ampdu_factor %02x, ampdu_density %02x\n",
 			ampdu_factor, ampdu_density);
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5,4,163)
-		return IEEE80211_AMPDU_TX_START_IMMEDIATE;
+		return IEEE80211_AMPDU_TX_START;
 #else
 		return 1;
 #endif
