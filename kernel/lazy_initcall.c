@@ -40,6 +40,35 @@ static bool completed;
  * You can also use this as an ignorelist.
  */
 static const __initconst char * const blacklist[] = {
+	"ax88179_178a",
+	"asix",
+	"dhd",
+	"mmrm_test_module",
+	"llcc_perfmon",
+
+	// Disabled via defconfig
+	"hdm",
+	"zram",
+	"coresight",
+	"coresight_tpda",
+	"coresight_csr",
+	"coresight_replicator",
+	"coresight_stm",
+	"coresight_dummy",
+	"coresight_remote_etm",
+	"coresight_tgu",
+	"coresight_cti",
+	"coresight_hwevent",
+	"coresight_tmc",
+	"coresight_funnel",
+	"coresight_tpdm",
+	"wcd937x_dlkm",
+	"wcd937x_slave_dlkm",
+
+	// Inlined so ignore them (Nethunter commits)
+	"cfg80211",
+	"mac80211",
+
 	NULL
 };
 
