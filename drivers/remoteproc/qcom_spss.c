@@ -587,7 +587,18 @@ static int qcom_spss_init_mmio(struct platform_device *pdev, struct qcom_spss *s
 
 int qcom_spss_set_fw_name(struct rproc *rproc, const char *fw_name)
 {
-	return rproc_set_firmware(rproc, fw_name);
+	const char *p;
+
+	p = kstrdup_const(fw_name, GFP_KERNEL);
+	if (!p)
+		return -ENOMEM;
+
+	mutex_lock(&rproc->lock);
+	kfree(rproc->firmware);
+	rproc->firmware = p;
+	mutex_unlock(&rproc->lock);
+
+	return 0;
 }
 EXPORT_SYMBOL(qcom_spss_set_fw_name);
 
