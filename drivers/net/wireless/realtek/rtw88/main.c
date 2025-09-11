@@ -1977,7 +1977,7 @@ int rtw_register_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
 	rtw_set_supported_band(hw, rtwdev->chip);
 	SET_IEEE80211_PERM_ADDR(hw, rtwdev->efuse.addr);
 
-	rtw_regd_init(rtwdev, rtw_regd_notifier);
+	rtw88_regd_init(rtwdev, rtw_regd_notifier);
 
 	ret = ieee80211_register_hw(hw);
 	if (ret) {

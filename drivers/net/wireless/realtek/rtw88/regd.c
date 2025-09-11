@@ -367,7 +367,7 @@ rtw_regd_init_wiphy(struct rtw_regulatory *reg, struct wiphy *wiphy,
 	return 0;
 }
 
-int rtw_regd_init(struct rtw_dev *rtwdev,
+int rtw88_regd_init(struct rtw_dev *rtwdev,
 		  void (*reg_notifier)(struct wiphy *wiphy,
 				       struct regulatory_request *request))
 {

@@ -522,7 +522,7 @@ static int rtw_ops_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 		/* need sw generated IV */
 		key->flags |= IEEE80211_KEY_FLAG_GENERATE_IV;
 		key->hw_key_idx = hw_key_idx;
-		rtw_sec_write_cam(rtwdev, sec, sta, key,
+		rtw88_sec_write_cam(rtwdev, sec, sta, key,
 				  hw_key_type, hw_key_idx);
 		break;
 	case DISABLE_KEY:
