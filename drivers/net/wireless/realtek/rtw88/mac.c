@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-/* Copyright(c) 2018-2019  Realtek Corporation
+/* Copyright(c) 2018-2021  Realtek Corporation
  */
 
 #include "main.h"
@@ -233,7 +233,7 @@ static int rtw_pwr_seq_parser(struct rtw_dev *rtwdev,
 
 		ret = rtw_sub_pwr_seq_parser(rtwdev, intf_mask, cut_mask, cmd);
 		if (ret)
-			return ret;
+			return -EBUSY;
 
 		idx++;
 	} while (1);
@@ -247,7 +247,6 @@ static int rtw_mac_power_switch(struct rtw_dev *rtwdev, bool pwr_on)
 	const struct rtw_pwr_seq_cmd **pwr_seq;
 	u8 rpwm;
 	bool cur_pwr;
-	int ret;
 
 	if (rtw_chip_wcpu_11ac(rtwdev)) {
 		rpwm = rtw_read8(rtwdev, rtwdev->hci.rpwm_addr);
@@ -271,9 +270,8 @@ static int rtw_mac_power_switch(struct rtw_dev *rtwdev, bool pwr_on)
 		return -EALREADY;
 
 	pwr_seq = pwr_on ? chip->pwr_on_seq : chip->pwr_off_seq;
-	ret = rtw_pwr_seq_parser(rtwdev, pwr_seq);
-	if (ret)
-		return ret;
+	if (rtw_pwr_seq_parser(rtwdev, pwr_seq))
+		return -EINVAL;
 
 	return 0;
 }
@@ -528,6 +526,25 @@ static int iddma_download_firmware(struct rtw_dev *rtwdev, u32 src, u32 dst,
 
 	if (iddma_enable(rtwdev, src, dst, ch0_ctrl))
 		return -EBUSY;
+
+	return 0;
+}
+
+int rtw_ddma_to_fw_fifo(struct rtw_dev *rtwdev, u32 ocp_src, u32 size)
+{
+	u32 ch0_ctrl = BIT_DDMACH0_OWN | BIT_DDMACH0_DDMA_MODE;
+
+	if (!check_hw_ready(rtwdev, REG_DDMA_CH0CTRL, BIT_DDMACH0_OWN, 0)) {
+		rtw_dbg(rtwdev, RTW_DBG_FW, "busy to start ddma\n");
+		return -EBUSY;
+	}
+
+	ch0_ctrl |= size & BIT_MASK_DDMACH0_DLEN;
+
+	if (iddma_enable(rtwdev, ocp_src, OCPBASE_RXBUF_FW_88XX, ch0_ctrl)) {
+		rtw_dbg(rtwdev, RTW_DBG_FW, "busy to complete ddma\n");
+		return -EBUSY;
+	}
 
 	return 0;
 }
@@ -1014,6 +1031,9 @@ static int txdma_queue_mapping(struct rtw_dev *rtwdev)
 	rtw_write8(rtwdev, REG_CR, MAC_TRX_ENABLE);
 	if (rtw_chip_wcpu_11ac(rtwdev))
 		rtw_write32(rtwdev, REG_H2CQ_CSR, BIT_H2CQ_FULL);
+
+	if (rtw_hci_type(rtwdev) == RTW_HCI_TYPE_USB)
+		rtw_write8_set(rtwdev, REG_TXDMA_PQ_MAP, BIT_RXDMA_ARBBW_EN);
 
 	return 0;
 }

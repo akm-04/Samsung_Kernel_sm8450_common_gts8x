@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-/* Copyright(c) 2018-2019  Realtek Corporation
+/* Copyright(c) 2018-2021  Realtek Corporation
  */
 
 #include "main.h"
@@ -42,7 +42,7 @@ static void rtw_ops_wake_tx_queue(struct ieee80211_hw *hw,
 		list_add_tail(&rtwtxq->list, &rtwdev->txqs);
 	spin_unlock_bh(&rtwdev->txq_lock);
 
-	tasklet_schedule(&rtwdev->tx_tasklet);
+	queue_work(rtwdev->tx_wq, &rtwdev->tx_work);
 }
 
 static int rtw_ops_start(struct ieee80211_hw *hw)
@@ -153,6 +153,9 @@ static int rtw_ops_add_interface(struct ieee80211_hw *hw,
 	u8 port = 0;
 	u8 bcn_ctrl = 0;
 
+	if (rtw_fw_feature_check(&rtwdev->fw, FW_FEATURE_BCN_FILTER))
+		vif->driver_flags |= IEEE80211_VIF_BEACON_FILTER |
+				     IEEE80211_VIF_SUPPORTS_CQM_RSSI;
 	rtwvif->port = port;
 	rtwvif->stats.tx_unicast = 0;
 	rtwvif->stats.rx_unicast = 0;
@@ -264,9 +267,9 @@ static void rtw_ops_configure_filter(struct ieee80211_hw *hw,
 
 	if (changed_flags & FIF_ALLMULTI) {
 		if (*new_flags & FIF_ALLMULTI)
-			rtwdev->hal.rcr |= BIT_AM;
+			rtwdev->hal.rcr |= BIT_AM | BIT_AB;
 		else
-			rtwdev->hal.rcr &= ~(BIT_AM);
+			rtwdev->hal.rcr &= ~(BIT_AM | BIT_AB);
 	}
 	if (changed_flags & FIF_FCSFAIL) {
 		if (*new_flags & FIF_FCSFAIL)
@@ -351,6 +354,8 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 {
 	struct rtw_dev *rtwdev = hw->priv;
 	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+	struct rtw_coex *coex = &rtwdev->coex;
+	struct rtw_coex_stat *coex_stat = &coex->stat;
 	u32 config = 0;
 
 	mutex_lock(&rtwdev->mutex);
@@ -381,6 +386,11 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 		config |= PORT_SET_BSSID;
 	}
 
+	if (changed & BSS_CHANGED_BEACON_INT) {
+		if (ieee80211_vif_type_p2p(vif) == NL80211_IFTYPE_STATION)
+			coex_stat->wl_beacon_interval = conf->beacon_int;
+	}
+
 	if (changed & BSS_CHANGED_BEACON)
 		rtw_fw_download_rsvd_page(rtwdev);
 
@@ -392,6 +402,8 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 			rtw_write32_clr(rtwdev, REG_FWHW_TXQ_CTRL,
 					BIT_EN_BCNQ_DL);
 	}
+	if (changed & BSS_CHANGED_CQM)
+		rtw_fw_beacon_filter_config(rtwdev, true, vif);
 
 	if (changed & BSS_CHANGED_MU_GROUPS)
 		rtw_chip_set_gid_table(rtwdev, vif, conf);
@@ -443,6 +455,7 @@ static int rtw_ops_sta_remove(struct ieee80211_hw *hw,
 {
 	struct rtw_dev *rtwdev = hw->priv;
 
+	rtw_fw_beacon_filter_config(rtwdev, false, vif);
 	mutex_lock(&rtwdev->mutex);
 	rtw_sta_remove(rtwdev, sta, true);
 	mutex_unlock(&rtwdev->mutex);
@@ -513,13 +526,14 @@ static int rtw_ops_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 				  hw_key_type, hw_key_idx);
 		break;
 	case DISABLE_KEY:
+		rtw_hci_flush_all_queues(rtwdev, false);
 		rtw_mac_flush_all_queues(rtwdev, false);
 		rtw_sec_clear_cam(rtwdev, sec, key->hw_key_idx);
 		break;
 	}
 
 	/* download new cam settings for PG to backup */
-	if (rtw_fw_lps_deep_mode == LPS_DEEP_MODE_PG)
+	if (rtw_get_lps_deep_mode(rtwdev) == LPS_DEEP_MODE_PG)
 		rtw_fw_download_rsvd_page(rtwdev);
 
 out:
@@ -528,18 +542,35 @@ out:
 	return ret;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
 static int rtw_ops_ampdu_action(struct ieee80211_hw *hw,
 				struct ieee80211_vif *vif,
 				struct ieee80211_ampdu_params *params)
+#else
+static int rtw_ops_ampdu_action(struct ieee80211_hw *hw,
+				struct ieee80211_vif *vif,
+				enum ieee80211_ampdu_mlme_action action,
+				struct ieee80211_sta *sta, u16 tid, u16 *ssn,
+				u8 buf_size, bool amsdu)
+#endif
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
 	struct ieee80211_sta *sta = params->sta;
 	u16 tid = params->tid;
 	struct ieee80211_txq *txq = sta->txq[tid];
 	struct rtw_txq *rtwtxq = (struct rtw_txq *)txq->drv_priv;
 
 	switch (params->action) {
+#else
+	switch (action) {
+#endif
 	case IEEE80211_AMPDU_TX_START:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
 		return IEEE80211_AMPDU_TX_START_IMMEDIATE;
+#else
+		ieee80211_start_tx_ba_cb_irqsafe(vif, sta->addr, tid);
+		break;
+#endif
 	case IEEE80211_AMPDU_TX_STOP_CONT:
 	case IEEE80211_AMPDU_TX_STOP_FLUSH:
 	case IEEE80211_AMPDU_TX_STOP_FLUSH_CONT:
@@ -560,6 +591,7 @@ static int rtw_ops_ampdu_action(struct ieee80211_hw *hw,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
 static bool rtw_ops_can_aggregate_in_amsdu(struct ieee80211_hw *hw,
 					   struct sk_buff *head,
 					   struct sk_buff *skb)
@@ -573,6 +605,7 @@ static bool rtw_ops_can_aggregate_in_amsdu(struct ieee80211_hw *hw,
 
 	return true;
 }
+#endif
 
 static void rtw_ops_sw_scan_start(struct ieee80211_hw *hw,
 				  struct ieee80211_vif *vif,
@@ -591,6 +624,7 @@ static void rtw_ops_sw_scan_start(struct ieee80211_hw *hw,
 	rtw_vif_port_config(rtwdev, rtwvif, config);
 
 	rtw_coex_scan_notify(rtwdev, COEX_SCAN_START);
+	rtw_core_fw_scan_notify(rtwdev, true);
 
 	set_bit(RTW_FLAG_DIG_DISABLE, rtwdev->flags);
 	set_bit(RTW_FLAG_SCANNING, rtwdev->flags);
@@ -610,6 +644,8 @@ static void rtw_ops_sw_scan_complete(struct ieee80211_hw *hw,
 	clear_bit(RTW_FLAG_SCANNING, rtwdev->flags);
 	clear_bit(RTW_FLAG_DIG_DISABLE, rtwdev->flags);
 
+	rtw_core_fw_scan_notify(rtwdev, false);
+
 	ether_addr_copy(rtwvif->mac_addr, vif->addr);
 	config |= PORT_SET_MAC_ADDR;
 	rtw_vif_port_config(rtwdev, rtwvif, config);
@@ -619,9 +655,18 @@ static void rtw_ops_sw_scan_complete(struct ieee80211_hw *hw,
 	mutex_unlock(&rtwdev->mutex);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
 static void rtw_ops_mgd_prepare_tx(struct ieee80211_hw *hw,
 				   struct ieee80211_vif *vif,
+    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0))
+				   struct ieee80211_prep_tx_info *info)
+    #else
 				   u16 duration)
+    #endif
+#else
+static void rtw_ops_mgd_prepare_tx(struct ieee80211_hw *hw,
+				   struct ieee80211_vif *vif)
+#endif
 {
 	struct rtw_dev *rtwdev = hw->priv;
 
@@ -663,6 +708,7 @@ static void rtw_ops_flush(struct ieee80211_hw *hw,
 	mutex_lock(&rtwdev->mutex);
 	rtw_leave_lps_deep(rtwdev);
 
+	rtw_hci_flush_queues(rtwdev, queues, drop);
 	rtw_mac_flush_queues(rtwdev, queues, drop);
 	mutex_unlock(&rtwdev->mutex);
 }
@@ -813,7 +859,9 @@ const struct ieee80211_ops rtw_ops = {
 	.sta_remove		= rtw_ops_sta_remove,
 	.set_key		= rtw_ops_set_key,
 	.ampdu_action		= rtw_ops_ampdu_action,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
 	.can_aggregate_in_amsdu	= rtw_ops_can_aggregate_in_amsdu,
+#endif
 	.sw_scan_start		= rtw_ops_sw_scan_start,
 	.sw_scan_complete	= rtw_ops_sw_scan_complete,
 	.mgd_prepare_tx		= rtw_ops_mgd_prepare_tx,
