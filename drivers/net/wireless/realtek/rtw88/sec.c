@@ -19,7 +19,7 @@ int rtw_sec_get_free_cam(struct rtw_sec_desc *sec)
 	return find_first_zero_bit(sec->cam_map, RTW_MAX_SEC_CAM_NUM);
 }
 
-void rtw_sec_write_cam(struct rtw_dev *rtwdev,
+void rtw88_sec_write_cam(struct rtw_dev *rtwdev,
 		       struct rtw_sec_desc *sec,
 		       struct ieee80211_sta *sta,
 		       struct ieee80211_key_conf *key,

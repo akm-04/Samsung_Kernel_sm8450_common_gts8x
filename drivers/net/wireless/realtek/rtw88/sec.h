@@ -26,7 +26,7 @@
 #define RTW_SEC_ENGINE_EN		BIT(9)
 
 int rtw_sec_get_free_cam(struct rtw_sec_desc *sec);
-void rtw_sec_write_cam(struct rtw_dev *rtwdev,
+void rtw88_sec_write_cam(struct rtw_dev *rtwdev,
 		       struct rtw_sec_desc *sec,
 		       struct ieee80211_sta *sta,
 		       struct ieee80211_key_conf *key,
