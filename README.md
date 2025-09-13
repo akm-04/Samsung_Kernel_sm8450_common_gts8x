@@ -1,3 +1,39 @@
+From AKM
+===============================
+This repository contains multiple branches of a Samsung SM8450-based kernel for Galaxy Tab S8 Series..
+---
+
+## 📂 Branch Details
+
+| Branch Name                      | Description                                                                                     |
+|----------------------------------|-------------------------------------------------------------------------------------------------|
+| **msm-kernel_monolithic**        | Based on Samsung's msm-kernel (stock); imports Samsung-specific changes from the GKI_Common tree to produce a single unified source tree. This branch uses Sultan's [integrated-modules](https://github.com/kerneltoast/android_kernel_google_gs201/commits/15.0.0-sultan/kernel/module.c) commits to fold all the generated modules into vmlinux and produce a monolithic kernel that does not depend on userspace modules. |
+| **msm-kernel_Nethunter**         | Based on `msm-kernel_monolithic` with Nethunter patches and drivers enabled. |
+| **msm-kernel_Nethunter-Lazy-initcall** | Based on `msm-kernel_Nethunter` with Nethunter patches and drivers enabled. This branch uses Arter's [CONFIG_LAZY_INITCALL](https://github.com/arter97/android_kernel_nothing_sm8475/commits/master/kernel/lazy_initcall.c) instead of Sultan's [CONFIG_INTEGRATED_MODULES](https://github.com/kerneltoast/android_kernel_google_gs201/commit/08f3e2c5a91ff555784d2ad45d86f446fb864218).   |
+| **msm-kernel_Modules**           | Derived from msm-kernel_monolithic but with only key imports and without the integrated-module commits — this branch can build and produce loadable modules. |
+| **common_android12-5.10**        | Common Kernel tree for Galaxy Tab S8 Series. This branch should work on all variants of Galaxy Tab S8, TabS8+ and Tab S8 Ultra variants. |
+
+---
+## 🛠️ Build Instructions
+
+1. **Clone the repo** and choose your branch:
+   ```bash
+   git clone https://github.com/akm-04/Samsung_Kernel_sm8450_common_gts8x.git
+   cd Samsung_Kernel_sm8450_common_gts8x
+   git checkout <branch name>
+2. Configure build.sh at the top for your environment:
+    - Use build.sh script in the root directory to start compile the kernel. Configure the build script as needed by specifying clang directories.
+    - Build script has options to compile with KernelSU or apply SUSFS patches (Enable either KernelSU or SUKISU or Kernelsu-next, do not enable all or more than one), set it up by editing the variables at the top.
+   ```bash
+   PATCH_SUSFS=1                    # 1 = apply SUSFS patch
+   ENABLE_KSU_NEXT=0                # 1 = enable KernelSU-Next
+   ENABLE_SUKISU=0                  # 1 = enable SukiSU-Ultra
+   ENABLE_KSU=1                     # 1 = enable classic KernelSU
+   And so on....
+   Warning: Do not use apatch or KPM patches on msm-kernel branches, it'll cause bootloops.
+
+3. Build the kernel by running the build script, final TWRP flashable kernel zip should be produced inside the AnyKernel3 directory.
+
 # How do I submit patches to Android Common Kernels
 
 1. BEST: Make all of your changes to upstream Linux. If appropriate, backport to the stable releases.
