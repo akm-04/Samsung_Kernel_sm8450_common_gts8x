@@ -91,7 +91,7 @@ SUSFS_CHECKOUT_HASH=""   # Specific commit SHA after cloning (empty = latest)
 ENABLE_KSU_NEXT=1        # Use KernelSU-Next? (1 = yes, 0 = no)
 KSU_NEXT_STABLE=1        # Select stable branch? (1 = stable, 0 = dev)
 KSU_NEXT_MANUAL_HOOKS=1  # Hooks style (1 = manual, 0 = kprobes)
-KSUN_CHECKOUT_HASH=""    # Specific KernelSU-Next commit SHA
+KSUN_CHECKOUT_HASH="0d6bdc6364cbfc73517dcfdf7ab23b0ba8045553"    # Specific KernelSU-Next commit SHA
 
 ## SUKISU-Ultra Options
 ENABLE_SUKISU=0          # Use SUKISU-Ultra? (1 = yes, 0 = no)
