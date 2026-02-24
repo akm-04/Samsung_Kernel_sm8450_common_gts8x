@@ -137,6 +137,18 @@ int stm32_read_version(struct stm32_dev *stm32)
 	stm32->ic_fw_ver.fw_major_ver = rbuf[3];
 	boot_module_id = stm32->ic_fw_ver.model_id;
 
+	/* 0xFE is the Tab S8 Ultra Keyboard (EF-DX900). */
+	/* If it is anything else, force the S9 firmware path. */
+	if (stm32->keyboard_model != 0xFE) {
+		stm32->dtdata->mcu_fw_name = "keyboard_stm/stm32_gts9family.bin";
+		input_info(true, &stm32->client->dev, "%s: S9 Keyboard detected. Swapping fw to %s\n", 
+			__func__, stm32->dtdata->mcu_fw_name);
+	} else {
+		/* Reset back to S8 default just in case of hot-swapping */
+		stm32->dtdata->mcu_fw_name = "keyboard_stm/stm32_gts8u.bin";
+	}
+	/* ------------------------------------- */
+
 	input_info(true, &stm32->client->dev, "%s: [IC] version:%d.%d, model_id:%02d, hw_rev:%02d\n",
 			__func__, stm32->ic_fw_ver.fw_major_ver, stm32->ic_fw_ver.fw_minor_ver,
 			stm32->ic_fw_ver.model_id, stm32->ic_fw_ver.hw_rev);
