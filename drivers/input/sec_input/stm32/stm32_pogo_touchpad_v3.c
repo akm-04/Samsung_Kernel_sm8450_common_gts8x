@@ -68,8 +68,6 @@
 
 #define X_EDGE_SIZE				220
 #define Y_EDGE_SIZE				120
-#define MAX_X_SIZE				25600
-#define MAX_Y_SIZE				16000
 
 enum touched_area {
 	TOUCHED_AREA_RELEASED = 0,
@@ -120,6 +118,8 @@ struct stm32_point_data {
 } __packed;
 
 struct stm32_touchpad_dtdata {
+	int dt_max_x;
+	int dt_max_y;
 	int max_x;
 	int max_y;
 	bool xy_switch;
@@ -138,6 +138,7 @@ struct stm32_touchpad_dev {
 	struct stm32_point_data prev_touch_info;
 	int move_count[STM32_TOUCH_MAX_FINGER_NUM];
 	int touch_count;
+	int prev_touch_count;
 	enum key_event button;
 	enum key_event button_state;
 	int button_code;
@@ -148,6 +149,18 @@ struct stm32_touchpad_dev {
 };
 
 extern void pogo_get_tc_resolution(int *x, int *y);
+
+static void stm32_set_multi_finger_gesture(struct stm32_touchpad_dev *stm32)
+{
+	int count = stm32->touch_count;
+
+	if (stm32->prev_touch_count == count)
+		return;
+
+	input_mt_report_finger_count(stm32->input_dev, count);
+
+	stm32->prev_touch_count = count;
+}
 
 static void stm32_release_all_finger(struct stm32_touchpad_dev *stm32)
 {
@@ -183,6 +196,8 @@ static void stm32_release_all_finger(struct stm32_touchpad_dev *stm32)
 
 	input_report_key(stm32->input_dev, BTN_TOUCH, 0);
 	input_report_key(stm32->input_dev, BTN_TOOL_FINGER, 0);
+	input_report_key(stm32->input_dev, BTN_TOOL_DOUBLETAP, 0);
+	input_report_key(stm32->input_dev, BTN_TOOL_TRIPLETAP, 0);
 
 	input_sync(stm32->input_dev);
 }
@@ -383,6 +398,8 @@ static void stm32_pogo_touchpad_event(struct stm32_touchpad_dev *stm32, char *ev
 		pogo_get_tc_resolution(&stm32->dtdata->max_x, &stm32->dtdata->max_y);
 	stm32->touch_count = touch_info.finger_cnt & 0xf;
 
+	stm32_set_multi_finger_gesture(stm32);
+
 	if (stm32_bit_test(touch_info.status, BIT_ICON_EVENT)) {
 		if (stm32_bit_test(touch_info.button_info, BIT_O_ICON0_DOWN)) {
 			stm32->button = ICON_BUTTON_DOWN;
@@ -490,14 +507,8 @@ static void stm32_pogo_touchpad_event(struct stm32_touchpad_dev *stm32, char *ev
 				input_mt_report_slot_state(stm32->input_dev, MT_TOOL_FINGER, 1);
 
 				input_report_abs(stm32->input_dev, ABS_MT_TOUCH_MAJOR, (u32)w);
-				if (stm32->dtdata->xy_switch) {
-					input_report_abs(stm32->input_dev, ABS_MT_POSITION_X, (x * MAX_Y_SIZE / stm32->dtdata->max_y));
-					input_report_abs(stm32->input_dev, ABS_MT_POSITION_Y, (y * MAX_X_SIZE / stm32->dtdata->max_x));
-				} else {
-					input_report_abs(stm32->input_dev, ABS_MT_POSITION_X, (x * MAX_X_SIZE / stm32->dtdata->max_x));
-					input_report_abs(stm32->input_dev, ABS_MT_POSITION_Y, (y * MAX_Y_SIZE / stm32->dtdata->max_y));
-				}
-
+				input_report_abs(stm32->input_dev, ABS_MT_POSITION_X, x);
+				input_report_abs(stm32->input_dev, ABS_MT_POSITION_Y, y);
 				input_report_key(stm32->input_dev, BTN_TOUCH, 1);
 			}
 		} else if (stm32_bit_test(sub_status, SUB_BIT_UP) || stm32_bit_test(prev_sub_status, SUB_BIT_EXIST)) {
@@ -567,6 +578,12 @@ static int stm32_parse_dt(struct device *dev, struct stm32_touchpad_dev *device_
 
 	memset(temp, 0x00, 3);
 
+	ret = of_property_read_u32_array(np, "touchpad,max", temp, 2);
+	if (!ret) {
+		device_data->dtdata->dt_max_x = temp[0];
+		device_data->dtdata->dt_max_y = temp[1];
+	}
+
 	ret = of_property_read_u32_array(np, "touchpad,invert", temp, 3);
 	if (!ret) {
 		device_data->dtdata->x_invert = temp[0];
@@ -584,7 +601,7 @@ static int stm32_parse_dt(struct device *dev, struct stm32_touchpad_dev *device_
 		input_err(true, dev, "unable to get model_name\n");
 
 	input_info(true, &device_data->pdev->dev, "max_x:%d, max_y:%d, invert:%d,%d, switch:%d\n",
-			device_data->dtdata->max_x, device_data->dtdata->max_y, device_data->dtdata->x_invert,
+			device_data->dtdata->dt_max_x, device_data->dtdata->dt_max_y, device_data->dtdata->x_invert,
 			device_data->dtdata->y_invert, device_data->dtdata->xy_switch);
 	return 0;
 }
@@ -595,7 +612,7 @@ static int stm32_parse_dt(struct device *dev, struct stm32_touchpad_dev *device_
 }
 #endif
 
-static int stm32_touchpad_set_input_dev(struct stm32_touchpad_dev *device_data)
+static int stm32_touchpad_set_input_dev(struct stm32_touchpad_dev *device_data, struct pogo_data_struct pogo_data)
 {
 	struct input_dev *input_dev;
 	int ret = 0, i;
@@ -617,17 +634,46 @@ static int stm32_touchpad_set_input_dev(struct stm32_touchpad_dev *device_data)
 	set_bit(INPUT_PROP_POINTER, input_dev->propbit);
 	set_bit(BTN_TOUCH, input_dev->keybit);
 	set_bit(BTN_TOOL_FINGER, input_dev->keybit);
+	set_bit(BTN_TOOL_DOUBLETAP, input_dev->keybit);
+	set_bit(BTN_TOOL_TRIPLETAP, input_dev->keybit);
 	set_bit(BTN_LEFT, input_dev->keybit);
 	set_bit(BTN_RIGHT, input_dev->keybit);
 	device_data->button_code = BTN_LEFT;
 
-	if (device_data->dtdata->xy_switch) {
-		input_set_abs_params(input_dev, ABS_MT_POSITION_X, 0, MAX_Y_SIZE - 1, 0, 0);
-		input_set_abs_params(input_dev, ABS_MT_POSITION_Y, 0, MAX_X_SIZE - 1, 0, 0);
+	if (pogo_data.keyboard_model == 0x01) {
+		//EF-DT870, EF-DT970
+		device_data->dtdata->max_x = device_data->dtdata->dt_max_x;
+		device_data->dtdata->max_y = device_data->dtdata->dt_max_y;
+	} else if (pogo_data.keyboard_model == 0xFD || pogo_data.keyboard_model == 0xD1 ||
+		pogo_data.keyboard_model == 0xFB || pogo_data.keyboard_model == 0xD2) {
+		//EF-DX715, EF-DX725, EF-DX815, EF-DX825
+		device_data->dtdata->max_x = 1560;
+		device_data->dtdata->max_y = 820;
+	} else if (pogo_data.keyboard_model == 0xFE || pogo_data.keyboard_model == 0xF9 ||
+			pogo_data.keyboard_model == 0xD3) {
+		//EF-DX900, EF-DX915, EF-DX925
+		device_data->dtdata->max_x = 1764;
+		device_data->dtdata->max_y = 1072;
 	} else {
-		input_set_abs_params(input_dev, ABS_MT_POSITION_X, 0, MAX_X_SIZE - 1, 0, 0);
-		input_set_abs_params(input_dev, ABS_MT_POSITION_Y, 0, MAX_Y_SIZE - 1, 0, 0);
+		device_data->dtdata->max_x = 2559;
+		device_data->dtdata->max_y = 1559;
 	}
+
+	input_info(true, &device_data->pdev->dev, "%s: max_x:%d, max_y:%d, xy_switch:%d\n",
+		__func__, device_data->dtdata->max_x, device_data->dtdata->max_y, device_data->dtdata->xy_switch);
+
+	if (device_data->dtdata->xy_switch) {
+		input_set_abs_params(input_dev, ABS_MT_POSITION_X, 0, device_data->dtdata->max_y - 1, 0, 0);
+		input_set_abs_params(input_dev, ABS_MT_POSITION_Y, 0, device_data->dtdata->max_x - 1, 0, 0);
+	} else {
+		input_set_abs_params(input_dev, ABS_MT_POSITION_X, 0, device_data->dtdata->max_x - 1, 0, 0);
+		input_set_abs_params(input_dev, ABS_MT_POSITION_Y, 0, device_data->dtdata->max_y - 1, 0, 0);
+	}
+	// logical size x:1764, y:1072
+	// physical size: x: 113mm, y: 68mm
+	// logical / physical = resolution: 15, 15
+	input_abs_set_res(input_dev, ABS_MT_POSITION_X, 15);
+	input_abs_set_res(input_dev, ABS_MT_POSITION_Y, 15);
 
 	input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
 	input_mt_init_slots(input_dev, STM32_TOUCH_MAX_FINGER_NUM, INPUT_MT_POINTER);
@@ -681,7 +727,7 @@ static int stm32_touchpad_pogo_notifier(struct notifier_block *nb, unsigned long
 		}
 
 		if (pogo_data.module_id != 1) {
-			stm32_touchpad_set_input_dev(stm32);
+			stm32_touchpad_set_input_dev(stm32, pogo_data);
 		} else if (stm32->input_dev) {
 			input_unregister_device(stm32->input_dev);
 			stm32->input_dev = NULL;

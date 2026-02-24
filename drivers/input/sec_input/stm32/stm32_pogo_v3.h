@@ -391,6 +391,7 @@ struct stm32_dev {
 	struct firmware *fw;
 	struct stm32_fw_header *fw_header;
 	struct stm32_fw_version ic_fw_ver;
+	u8 model_name_id;
 	u32 crc_of_ic;
 	u32 crc_of_bin;
 

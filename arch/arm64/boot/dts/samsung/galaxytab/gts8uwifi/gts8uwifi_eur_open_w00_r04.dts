@@ -9862,7 +9862,7 @@
 				qcom,msm-bus,num-cases = <0x02>;
 				qcom,msm-bus,num-paths = <0x01>;
 				qcom,msm-bus,vectors-KBps = <0x01 0x200 0x00 0x00 0x01 0x200 0x00 0x3e12a0>;
-				stm32,model_name = "\0\0EF-DX900";
+				stm32,model_name = "EF-DX915\0EF-DX910\0EF-DX900\0EF-DX925\0EF-DX920";
 				stm32,fota_fw_path = [00];
 				stm32,magic_word_offset = <0xbc>;
 				support_open_close;
@@ -9878,13 +9878,16 @@
 
 			pogo_touchpad {
 				compatible = "stm,touchpad";
-				touchpad,max_coords = <0x6e4 0x430>;
+				touchpad,max = <0x6e4 0x430>;
 				touchpad,invert = <0x00 0x01 0x01>;
+				touchpad,support_keyboard_model = <0xf9 0xf8 0xfe 0xd3 0xd6 0x51>;
 			};
 
 			pogo_kpd {
 				compatible = "stm,keypad";
-				keypad,input_name = "Book Cover Keyboard (EF-DX900)";
+				keypad,input_name_row = [00];
+				keypad,input_name = "Book Cover Keyboard (EF-DX915)\0Book Cover Keyboard Slim (EF-DX910)\0Book Cover Keyboard (EF-DX900)\0Book Cover Keyboard (EF-DX925)\0Book Cover Keyboard Slim (EF-DX920)\0Neos Keyboard";
+				keypad,support_keyboard_model = <0xf9 0xf8 0xfe 0xd3 0xd6 0x51>;
 			};
 		};
 	};
