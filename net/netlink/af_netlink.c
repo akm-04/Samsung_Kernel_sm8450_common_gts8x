@@ -1951,8 +1951,8 @@ static int netlink_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 	size_t copied;
 	struct sk_buff *skb, *data_skb;
 	int err, ret;
-	struct nlmsghdr *nh;
-	struct nlmsgerr *err2;
+//	struct nlmsghdr *nh;
+//	struct nlmsgerr *err2;
 
 	if (flags & MSG_OOB)
 		return -EOPNOTSUPP;
