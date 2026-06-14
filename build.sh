@@ -234,7 +234,7 @@ setup_env(){
 
     # Required by techpack
     #1. target config
-    BUILD_TARGET=gts8uwifi_eur_open
+    BUILD_TARGET=gts8u_kor_openx
     export MODEL=$(echo ${BUILD_TARGET} | cut -d'_' -f1)
     export PROJECT_NAME=${MODEL}
     export REGION=$(echo ${BUILD_TARGET} | cut -d'_' -f2)
