@@ -1,0 +1,96 @@
+name: Build Kernel
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      CI_RUN: "1"
+      CI_ENABLE_KSU_NEXT: "1"
+      CI_TOOLCHAIN_DIR: ${{ github.workspace }}/Clang
+    steps:
+      - name: Compute short branch and Timestamp
+        run: |
+          SHORT_BRANCH=$(echo "${{ github.ref_name }}" | cut -d'_' -f1,2)
+          TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          echo "SHORT_BRANCH=$SHORT_BRANCH" >> "$GITHUB_ENV"
+          echo "TIMESTAMP=$TIMESTAMP" >> "$GITHUB_ENV"
+
+      - name: Check starting disk space
+        run: df -h /
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Create LTO swapfile
+        run: |
+          sudo fallocate -l 48G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential bc bison flex \
+            libssl-dev libelf-dev libncurses-dev \
+            dwarves fakeroot \
+            git curl wget rsync patch \
+            python3 python3-pip \
+            zip unzip cpio kmod \
+            perl pkg-config \
+            device-tree-compiler u-boot-tools \
+            liblz4-tool zstd \
+            clang llvm lld lldb \
+            binutils-aarch64-linux-gnu \
+            libc6-dev-i386 lib32stdc++6 lib32z1
+
+      - uses: actions/checkout@v4
+
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CI_TOOLCHAIN_DIR }}
+          key: toolchain-r416183c1
+
+      - name: Run build
+        env:
+          # Needs to be passed anyway as required by build.sh, even if CI re-zips kernel
+          CI_KERNEL_NAME: "${{ env.SHORT_BRANCH }}_workflow_kernel-build"
+        run: ./build.sh
+
+      - name: Upload kernel zip
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SHORT_BRANCH }}-flashable-${{ env.TIMESTAMP }}
+          path: |
+            AnyKernel3/*
+            !AnyKernel3/*.zip
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Generate Public Download Link
+        if: success()
+        run: |
+          echo "### Download Link (No Login Required)" >> $GITHUB_STEP_SUMMARY
+          echo "This link bypasses the GitHub login requirement and downloads this exact build." >> $GITHUB_STEP_SUMMARY
+          echo "[Download ${{ env.SHORT_BRANCH }} Kernel](https://nightly.link/${{ github.repository }}/actions/runs/${{ github.run_id }}/${{ env.SHORT_BRANCH }}-flashable-${{ env.TIMESTAMP }}.zip)" >> $GITHUB_STEP_SUMMARY
