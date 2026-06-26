@@ -71,6 +71,7 @@ MAKE_FLAGS=( \
 # ---------------------------------------------------------------------------- #
 
 ARTIFACT="Image.gz"      # Final kernel artifact filename
+FINAL_KERNEL_ZIP=""      # If left empty, script will ask Final name when running
 BUILD_MODULES="n"        # Build modules? (y = yes, n = no)
 ENABLE_BREAKPOINTS=0     # Enable script breakpoints for manual steps verification (1 = on, 0 = off)
 
@@ -112,89 +113,89 @@ APATCH_VER="0.12.0"  # Release tag of Apatch binary
 KPTOOLS_VER="0.11.3"     # Release tag of kptools binary
 
 # --------------------- Variable verification and corrections -------------------------------------#
+check_KSUN_configs() {
+    # --- ensure only one KernelSU variant is enabled ---
+    count=0
+    enabled_list=""
 
-# --- ensure only one KernelSU variant is enabled ---
-count=0
-enabled_list=""
-
-if [[ "$ENABLE_KSU" == "1" ]]; then
-    count=$((count + 1))
-    enabled_list="${enabled_list}KernelSU, "
-fi
-
-if [[ "$ENABLE_SUKISU" == "1" ]]; then
-    count=$((count + 1))
-    enabled_list="${enabled_list}SUKISU, "
-fi
-
-if [[ "$ENABLE_KSU_NEXT" == "1" ]]; then
-    count=$((count + 1))
-    enabled_list="${enabled_list}KernelSU-Next, "
-fi
-
-if [[ $count -gt 1 ]]; then
-    # trim trailing ", "
-    enabled_list=${enabled_list%??}
-    echo -e "${red}Error:${nocol} Only one KernelSU variant may be enabled. You enabled: ${yellow}${enabled_list}${nocol}" >&2
-    exit 1
-fi
-
-# ------------- ensure all assigned values are either 1 or 0 ---
-
-if [[ "$ENABLE_KSU_NEXT" != "1" && "$ENABLE_KSU_NEXT" != "0" ]]; then
-    echo -e "${yellow}Invalid ENABLE_KSU_NEXT variable value; defaulting to 0${nocol}" >&2
-    ENABLE_KSU_NEXT=0
-fi
-
-if [[ "$ENABLE_SUKISU" != "1" && "$ENABLE_SUKISU" != "0" ]]; then
-    echo -e "${yellow}Invalid ENABLE_SUKISU variable value; defaulting to 0${nocol}" >&2
-    ENABLE_SUKISU=0
-fi
-
-if [[ "$ENABLE_KSU" != "1" && "$ENABLE_KSU" != "0" ]]; then
-    echo -e "${yellow}Invalid ENABLE_KSU variable value; defaulting to 0${nocol}" >&2
-    ENABLE_KSU=0
-fi
-
-if [[ "$PATCH_SUSFS" != "1" && "$PATCH_SUSFS" != "0" ]]; then
-    echo -e "${yellow}Invalid PATCH_SUSFS variable value; defaulting to 0${nocol}" >&2
-    PATCH_SUSFS=0
-fi
-
-# KernelSU-Next removed SUSFS branches, so if using KernelSU-Next do not apply susfs patches
-if [[ "$ENABLE_KSU_NEXT" == "1" ]]; then
-    PATCH_SUSFS=0
-fi
-
-# If sukisu is not enabled, do not run KPM kernel binary patches
-if [[ "$ENABLE_SUKISU" != "1" ]]; then
-    PATCH_KPM=0
-fi
-
-# Only one type of Hook variant maybe selected
-if [[ "$SUKI_MANUAL_HOOKS" == "1" && "$SUKI_TRACEPOINTS_HOOK" == "1" ]]; then
-    echo -e "${red}Error:${nocol} Only one type of SUKISU Hook variant may be applied! You enabled both SUKISU Manual Hook and Tracepoint Hook."
-    exit 1
-fi
-
-# Apatch Verification | Do not apply apatch if KPM patches are selected and sukisu is enabled.
-if [[ "$ENABLE_APATCH" == "1" && "$PATCH_KPM" == "1" && "$ENABLE_SUKISU" == "1" ]]; then
-    echo -e "${red}Error:${nocol} SUKISU is selected: Apatch and KPM patches cannot be applied at the same time!"
-    exit 1
-fi
-
-# SUKISU normal version without susfs does not support manual hooks
-if [[ "$ENABLE_SUKISU" == "1" && "$PATCH_SUSFS" == "0" ]]; then
-    if [[ "$SUKI_MANUAL_HOOKS" == "1" ]]; then
-        echo -e "${blue}Note:${nocol} SUKISU normal (no SUSFS) does not support manual hooks — disabling SUKI_MANUAL_HOOKS."
-        SUKI_MANUAL_HOOKS=0
+    if [[ "$ENABLE_KSU" == "1" ]]; then
+        count=$((count + 1))
+        enabled_list="${enabled_list}KernelSU, "
     fi
-fi
-# If no KSU variant is enabled, never apply SUSFS
-if [[ "$ENABLE_KSU_NEXT" == "0" && "$ENABLE_SUKISU" == "0" && "$ENABLE_KSU" == "0" ]]; then
-    PATCH_SUSFS=0
-fi
 
+    if [[ "$ENABLE_SUKISU" == "1" ]]; then
+        count=$((count + 1))
+        enabled_list="${enabled_list}SUKISU, "
+    fi
+
+    if [[ "$ENABLE_KSU_NEXT" == "1" ]]; then
+        count=$((count + 1))
+        enabled_list="${enabled_list}KernelSU-Next, "
+    fi
+
+    if [[ $count -gt 1 ]]; then
+        # trim trailing ", "
+        enabled_list=${enabled_list%??}
+        echo -e "${red}Error:${nocol} Only one KernelSU variant may be enabled. You enabled: ${yellow}${enabled_list}${nocol}" >&2
+        exit 1
+    fi
+
+    # ------------- ensure all assigned values are either 1 or 0 ---
+
+    if [[ "$ENABLE_KSU_NEXT" != "1" && "$ENABLE_KSU_NEXT" != "0" ]]; then
+        echo -e "${yellow}Invalid ENABLE_KSU_NEXT variable value; defaulting to 0${nocol}" >&2
+        ENABLE_KSU_NEXT=0
+    fi
+
+    if [[ "$ENABLE_SUKISU" != "1" && "$ENABLE_SUKISU" != "0" ]]; then
+        echo -e "${yellow}Invalid ENABLE_SUKISU variable value; defaulting to 0${nocol}" >&2
+        ENABLE_SUKISU=0
+    fi
+
+    if [[ "$ENABLE_KSU" != "1" && "$ENABLE_KSU" != "0" ]]; then
+        echo -e "${yellow}Invalid ENABLE_KSU variable value; defaulting to 0${nocol}" >&2
+        ENABLE_KSU=0
+    fi
+
+    if [[ "$PATCH_SUSFS" != "1" && "$PATCH_SUSFS" != "0" ]]; then
+        echo -e "${yellow}Invalid PATCH_SUSFS variable value; defaulting to 0${nocol}" >&2
+        PATCH_SUSFS=0
+    fi
+
+    # KernelSU-Next removed SUSFS branches, so if using KernelSU-Next do not apply susfs patches
+    if [[ "$ENABLE_KSU_NEXT" == "1" ]]; then
+        PATCH_SUSFS=0
+    fi
+
+    # If sukisu is not enabled, do not run KPM kernel binary patches
+    if [[ "$ENABLE_SUKISU" != "1" ]]; then
+        PATCH_KPM=0
+    fi
+
+    # Only one type of Hook variant maybe selected
+    if [[ "$SUKI_MANUAL_HOOKS" == "1" && "$SUKI_TRACEPOINTS_HOOK" == "1" ]]; then
+        echo -e "${red}Error:${nocol} Only one type of SUKISU Hook variant may be applied! You enabled both SUKISU Manual Hook and Tracepoint Hook."
+        exit 1
+    fi
+
+    # Apatch Verification | Do not apply apatch if KPM patches are selected and sukisu is enabled.
+    if [[ "$ENABLE_APATCH" == "1" && "$PATCH_KPM" == "1" && "$ENABLE_SUKISU" == "1" ]]; then
+        echo -e "${red}Error:${nocol} SUKISU is selected: Apatch and KPM patches cannot be applied at the same time!"
+        exit 1
+    fi
+
+    # SUKISU normal version without susfs does not support manual hooks
+    if [[ "$ENABLE_SUKISU" == "1" && "$PATCH_SUSFS" == "0" ]]; then
+        if [[ "$SUKI_MANUAL_HOOKS" == "1" ]]; then
+            echo -e "${blue}Note:${nocol} SUKISU normal (no SUSFS) does not support manual hooks — disabling SUKI_MANUAL_HOOKS."
+            SUKI_MANUAL_HOOKS=0
+        fi
+    fi
+    # If no KSU variant is enabled, never apply SUSFS
+    if [[ "$ENABLE_KSU_NEXT" == "0" && "$ENABLE_SUKISU" == "0" && "$ENABLE_KSU" == "0" ]]; then
+        PATCH_SUSFS=0
+    fi
+}
 # -------------------------------------- Cloning Functions and setup enviroment ------------------------------------------------------#
 
 # Toybox patch from build-tools gives issues when applying patches with fuzz.
@@ -235,24 +236,71 @@ setup_env(){
     echo -e "${green}Environment set up done!${nocol}"
 }
 
+# Generic retrying downloader. Parses "$@" to identify the target output (-O) 
+# to clean up stale files on failure, avoiding wget's numbered duplicate bug.
+wget_download() {
+    local attempts=5 n=1
+    local args=("$@") out=""
+    for ((i=0; i<${#args[@]}; i++)); do
+        if [[ "${args[i]}" == "-O" ]]; then
+            out="${args[i+1]}"
+            break
+        fi
+    done
+    while (( n <= attempts )); do
+        if wget --tries=3 --waitretry=10 --retry-connrefused \
+                --retry-on-http-error=429,500,502,503,504 \
+                --show-progress "$@"; then
+            return 0
+        fi
+        echo -e "${yellow}⚠️  Download attempt $n/$attempts failed. Retrying in 15s...${nocol}"
+        [[ -n "$out" ]] && rm -f "$out"
+        sleep 15
+        n=$((n+1))
+    done
+    return 1
+}
+
+# Generic retrying clone wrapper. Identifies the destination directory via the 
+# absolute last argument (${@: -1}) to ensure clean retries after network drops.
+git_clone() {
+    local attempts=5 n=1
+    local dest="${@: -1}"
+    while (( n <= attempts )); do
+        if git clone "$@"; then
+            return 0
+        fi
+        echo -e "${yellow}⚠️  git clone attempt $n/$attempts failed. Retrying in 15s...${nocol}"
+        [[ -d "$dest" ]] && rm -rf "$dest"
+        sleep 15
+        n=$((n+1))
+    done
+    return 1
+}
+
 clone_clang() {
     log_section "Cloning Clang Function Start"
-    if ! [ -d "$CLANG_DIR" ]; then
+    if ! [ -x "$CLANG_BINARY" ]; then
         echo -e "${yellow}⚠️  Clang directory not found:${nocol} $CLANG_DIR"
-        read -p "Press ENTER to clone to this path, or Ctrl+C to abort and edit the script to configure correct cloning directory: "
+        if [[ "${CI_RUN:-0}" != "1" ]]; then
+            read -p "Press ENTER to clone to this path, or Ctrl+C to abort and edit the script to configure correct cloning directory: "
+        fi
         echo -e "${red}Cloning clang at $CLANG_DIR ...${nocol}"
+        rm -rf "$CLANG_DIR"
         mkdir -p "$CLANG_DIR"
 # ----------------------------------------------------
 # Link for cloning clang 20+
-#        if ! wget --show-progress -O "$CLANG_DIR/${CLANG_VERSION}.tar.gz" "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/${CLANG_VERSION}.tar.gz"; then
+#        if ! wget_download --show-progress -O "$CLANG_DIR/${CLANG_VERSION}.tar.gz" "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/${CLANG_VERSION}.tar.gz"; then
 #            echo "${red}Cloning failed! Aborting...${nocol}"
+#            rm -rf "$CLANG_DIR"
 #            exit 1
 #        fi
 # ------------------------------------------------------------------------------
 # Available clangs on this link 
 # clang-3289846/ clang-r399163b/ clang-r416183b/ clang-r416183b1/ clang-r416183c/ clang-r416183c1/ clang-r428724/ clang-r433403/
-        if ! wget --show-progress -O "$CLANG_DIR/${CLANG_VERSION}.tar.gz" "https://android.googlesource.com/platform//prebuilts/clang/host/linux-x86/+archive/1c1069109f294e9ffbdc1ff8541394ab4b5d941d/${CLANG_VERSION}.tar.gz"; then
+        if ! wget_download --show-progress -O "$CLANG_DIR/${CLANG_VERSION}.tar.gz" "https://android.googlesource.com/platform//prebuilts/clang/host/linux-x86/+archive/1c1069109f294e9ffbdc1ff8541394ab4b5d941d/${CLANG_VERSION}.tar.gz"; then
             echo "${red}Cloning failed! Aborting...${nocol}"
+            rm -rf "$CLANG_DIR"
             exit 1
         fi
         echo "${yellow}Cloning successful. Extracting the tar file...${nocol}"
@@ -267,11 +315,13 @@ clone_gas(){
     log_section "Cloning gas Function Start"
     if ! [ -d "$TOOLCHAIN_DIR/gas/linux-x86" ]; then
         echo -e "${yellow}⚠️  gas directory not found:${nocol} $TOOLCHAIN_DIR/gas/linux-x86"
-        read -p "Press ENTER to clone to this path, or Ctrl+C to abort and edit the script to configure correct cloning directory: "
+        if [[ "${CI_RUN:-0}" != "1" ]]; then
+            read -p "Press ENTER to clone to this path, or Ctrl+C to abort and edit the script to configure correct cloning directory: "
+        fi
         echo -e "${red}Cloning gas at $TOOLCHAIN_DIR/gas/linux-x86 ...${nocol}"
         mkdir -p "$TOOLCHAIN_DIR/gas"
 
-        if ! git clone https://android.googlesource.com/platform/prebuilts/gas/linux-x86 \
+        if ! git_clone https://android.googlesource.com/platform/prebuilts/gas/linux-x86 \
             "$TOOLCHAIN_DIR/gas/linux-x86"; then
             echo -e "${red}Cloning gas failed! Aborting...${nocol}"
             exit 1
@@ -288,11 +338,13 @@ clone_build_tools(){
     # check for the linux-x86 prebuilts inside build-tools
     if ! [ -d "$TOOLCHAIN_DIR/build-tools/path/linux-x86" ]; then
         echo -e "${yellow}⚠️  build-tools directory not found:${nocol} $TOOLCHAIN_DIR/build-tools/path/linux-x86"
-        read -p "Press ENTER to clone to this path, or Ctrl+C to abort and edit the script to configure correct cloning directory: "
+        if [[ "${CI_RUN:-0}" != "1" ]]; then
+            read -p "Press ENTER to clone to this path, or Ctrl+C to abort and edit the script to configure correct cloning directory: "
+        fi
         echo -e "${red}Cloning build-tools at $TOOLCHAIN_DIR/build-tools ...${nocol}"
         mkdir -p "$TOOLCHAIN_DIR/build-tools"
 
-        if ! git clone https://android.googlesource.com/platform/prebuilts/build-tools \
+        if ! git_clone https://android.googlesource.com/platform/prebuilts/build-tools \
                        "$TOOLCHAIN_DIR/build-tools"; then
             echo -e "${red}Cloning build-tools failed! Aborting...${nocol}"
             exit 1
@@ -320,27 +372,51 @@ log_section() {
 }
 
 start() {
-    FINAL_KERNEL_ZIP=""
-    while true; do
-        read -rp "Enter final kernel zip name (format: <kernel_name>.zip): " FINAL_KERNEL_ZIP
 
-        # Strip all whitespace and stray CR
+    # If we are in CI, handle it immediately and skip the interactive stuff
+    if [[ "${CI_RUN:-0}" == "1" ]]; then
+        if [[ -z "$FINAL_KERNEL_ZIP" ]]; then
+            echo -e "${red}CI FATAL ERROR: CI_RUN=1 but CI_KERNEL_NAME was not set! Aborting.${nocol}" >&2
+            exit 1
+        fi
+        
         FINAL_KERNEL_ZIP="${FINAL_KERNEL_ZIP//[[:space:]]/}"
         FINAL_KERNEL_ZIP="${FINAL_KERNEL_ZIP//$'\r'/}"
-
-        # 1) Reject truly empty input
-        if [[ -z "$FINAL_KERNEL_ZIP" ]]; then
-            echo -e "${yellow}Input cannot be empty.${nocol}"
-            continue
-        fi
-
-        # 2) Append .zip only once
+        
         if [[ "$FINAL_KERNEL_ZIP" != *.zip ]]; then
             FINAL_KERNEL_ZIP="${FINAL_KERNEL_ZIP}.zip"
         fi
+        
+        echo -e "Final Kernel name is set to $FINAL_KERNEL_ZIP"
+        return # Exits the function early, skipping the read prompt entirely
+    fi
+    
+    while [[ -z "$FINAL_KERNEL_ZIP" ]]; do
+        read -rp "Enter final kernel zip name (format: <kernel_name>.zip): " FINAL_KERNEL_ZIP
 
-        break
+        # Strip whitespace/CR just for the user input 
+        FINAL_KERNEL_ZIP="${FINAL_KERNEL_ZIP//[[:space:]]/}"
+        FINAL_KERNEL_ZIP="${FINAL_KERNEL_ZIP//$'\r'/}"
+
+        if [[ -z "$FINAL_KERNEL_ZIP" ]]; then
+            echo -e "${yellow}Input cannot be empty.${nocol}"
+        fi
     done
+        
+    # Strip all whitespace and stray CR
+    FINAL_KERNEL_ZIP="${FINAL_KERNEL_ZIP//[[:space:]]/}"
+    FINAL_KERNEL_ZIP="${FINAL_KERNEL_ZIP//$'\r'/}"
+
+    # 1) Reject truly empty input
+    if [[ -z "$FINAL_KERNEL_ZIP" ]]; then
+        echo -e "${yellow}Input cannot be empty.${nocol}"
+        exit 1
+    fi
+
+    # 2) Append .zip only once
+    if [[ "$FINAL_KERNEL_ZIP" != *.zip ]]; then
+        FINAL_KERNEL_ZIP="${FINAL_KERNEL_ZIP}.zip"
+    fi
 
     echo -e "Final Kernel name is set to $FINAL_KERNEL_ZIP"
 }
@@ -429,7 +505,7 @@ zip_kernel() {
 
     if [ ! -d "$ANYKERNEL3_DIR" ]; then
         echo -e "${blue}|| AnyKernel3 not found, cloning branch '$AK3_BRANCH'…${nocol}"
-        if ! git clone --depth 1 --branch "$AK3_BRANCH" "$AK3_REPO" "$ANYKERNEL3_DIR"; then
+        if ! git_clone --depth 1 --branch "$AK3_BRANCH" "$AK3_REPO" "$ANYKERNEL3_DIR"; then
             echo -e "${red}❌ Failed to clone AnyKernel3 from $AK3_REPO (branch $AK3_BRANCH). Aborting.${nocol}"
             exit 1
         fi
@@ -553,7 +629,7 @@ build_modules() {
         # Ensure NetErnel_modules exists, clone if missing
         if [[ ! -d "$KERNELDIR/NetErnel_modules" ]]; then
             echo -e "${yellow}NetErnel_modules folder not found; cloning from GitHub...${nocol}"
-            if git clone https://github.com/akm-04/NetErnels-Modules.git NetErnel_modules; then
+            if git_clone https://github.com/akm-04/NetErnels-Modules.git NetErnel_modules; then
                 echo -e "${green}Cloned NetErnels-Modules into NetErnel_modules successfully.${nocol}"
             else
                 echo -e "${red}**** Error: Failed to clone NetErnels-Modules repo. ****${nocol}"
@@ -714,7 +790,7 @@ SUSFS_Patch() {
 
         # 1) Clone the susfs4ksu repo (contains fs code and patch)
         echo -e "${blue}Cloning susfs4ksu branch gki-android13-5.15…${nocol}"
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10
+        git_clone -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
         
         # 1.5) Optional checkout
         if [[ -n "$SUSFS_CHECKOUT_HASH" ]]; then
@@ -976,7 +1052,7 @@ KPM_Patch() {
     cd $ANYKERNEL3_DIR/
 
     echo -e "$yellow**** Cloning KPM patch binary ****$nocol"
-    wget --tries=3 "https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/download/${KPM_VERSION}/patch_linux"
+    wget_download -O patch_linux "https://github.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/download/${KPM_VERSION}/patch_linux"
     chmod +x patch_linux
     echo -e "$yellow**** Now patching the Kernel Binary with KPM****$nocol"
     echo  # Blank line
@@ -1004,13 +1080,28 @@ APATCH() {
     cd $ANYKERNEL3_DIR/
 
     echo -e "$yellow**** Cloning apatch and other needed binaries ****$nocol"
-    wget --tries=3 "https://github.com/bmax121/KernelPatch/releases/download/${KPTOOLS_VER}/kptools-linux"
-    wget --tries=3 "https://github.com/bmax121/KernelPatch/releases/download/${APATCH_VER}/kpimg-android"
+    wget_download -O kptools-linux "https://github.com/bmax121/KernelPatch/releases/download/${KPTOOLS_VER}/kptools-linux"
+    wget_download -O kpimg-android "https://github.com/bmax121/KernelPatch/releases/download/${APATCH_VER}/kpimg-android"
     chmod +x kptools-linux
+
     echo -e "$yellow**** Now patching the Kernel Binary with APATCH****$nocol"
     echo  # Blank line
-    read -rp "Enter a strong SUPERKEY for apatch (atleast 8 characters with letters and numbers): " SUPER_KEY
+
+    # Loop until the check_superkey function returns 0 (true)
+    while ! check_superkey "${SUPER_KEY:-}"; do
+        if [[ -n "${SUPER_KEY:-}" ]]; then
+            echo -e "${red}Error: SUPERKEY must be at least 8 characters long and contain both letters and numbers.${nocol}"
+        fi
+        
+        read -rp "Enter a strong SUPERKEY for apatch: " SUPER_KEY
+        
+        # Strip spaces and carriage returns
+        SUPER_KEY="${SUPER_KEY//[[:space:]]/}"
+        SUPER_KEY="${SUPER_KEY//$'\r'/}"
+    done
+
     echo  # Blank line
+
     export SUPER_KEY
     ./kptools-linux -p --image Image --skey "${SUPER_KEY}" --kpimg kpimg-android --out oImage
     if [[ "$ENABLE_BREAKPOINTS" == "1" ]]; then
@@ -1027,8 +1118,30 @@ APATCH() {
     cd $KERNELDIR
 }
 
+check_superkey() {
+    local key="$1"
+
+    # Check 1: Must be at least 8 characters
+    if [[ ${#key} -lt 8 ]]; then
+        return 1
+    fi
+
+    # Check 2: Must contain at least one letter and one number
+    if ! [[ "$key" =~ [a-zA-Z] && "$key" =~ [0-9] ]]; then
+        return 1
+    fi
+
+    # If it passes both, return true
+    return 0
+}
+
 Final_CLEANUP() {
     cd "$KERNELDIR" || exit 1
+
+    # Skip Cleanup. Workflow doesn't need a cleanup anyway.
+    if [[ "${CI_RUN:-0}" == "1" ]]; then
+        return 0 
+    fi
 
     if [[ "$ENABLE_KSU" == "1" ]]; then
         log_section "Final Clean: Removing KernelSU Framework"
@@ -1051,7 +1164,7 @@ Final_CLEANUP() {
         curl -fsSL \
           "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
           | bash -s -- --cleanup \
-          || { echo -e "${red}KernelSU-Next cleanup failed!${nocol}"; exit 1; }
+          || { echo -e "${red}SUKISU cleanup failed!${nocol}"; exit 1; }
     fi
 
     log_section "To reset repository to pristine state and clean SUSFS patches, run the following command:"
@@ -1060,9 +1173,136 @@ Final_CLEANUP() {
     echo -e "${yellow}git reset --hard HEAD && git clean -xfd${nocol}"
 }
 
+CI_Setup() {
+    # ==============================================================================
+    #                      CI WORKFLOW CONFIGURATIONS
+    # ==============================================================================
+    # To trigger this automated CI mode, you MUST export:
+    #   CI_RUN="1"
+    #   CI_KERNEL_NAME="Name of the final zip produced"
+    #
+    # All other variables below are OPTIONAL. If omitted, the script will safely
+    # fall back to the local defaults defined at the top of build.sh.
+    #
+    # --- ROOT & PATCH TOGGLES (Expects: "1" for Enable, "0" for Disable) ---
+    # NOTE: In CI mode, all root solutions and SUSFS strictly default to "0".
+    #   CI_ENABLE_KSU_NEXT          CI_KSU_NEXT_STABLE       CI_KSU_NEXT_MANUAL_HOOKS
+    #   CI_ENABLE_SUKISU            CI_SUKI_MANUAL_HOOKS     CI_SUKI_TRACEPOINTS_HOOK  
+    #   CI_ENABLE_KSU               CI_PATCH_KPM             CI_PATCH_SUSFS
+    #   CI_ENABLE_APATCH  |  (If APATCH SET): CI_SUPER_KEY    
+    #
+    # --- MODULE BUILD TOGGLE (Expects: "y" for Yes, "n" for No) ---
+    #   CI_BUILD_MODULES
+    #
+    # --- STRING CONFIGURATIONS (Expects: Text strings, paths, or commit SHAs) ---
+    #   CI_KERNEL_NAME              (e.g., "gts8u_Workflow_Kernel")
+    #   CI_KERNEL_DEFCONFIG         (e.g., "gts8uwifi_waipio_defconfig")
+    #   CI_MODULES_NAME             (e.g., "Kernel_Modules-Magisk")
+    #   CI_ARTIFACT                 (e.g., "Image.gz")
+    #   CI_AK3_REPO                 (e.g., "https://github.com/akm-04/AnyKernel3.git")
+    #   CI_AK3_BRANCH               (e.g., "gts8x")
+    #   CI_TOOLCHAIN_DIR            (e.g., "/home/runner/work/Clang")
+    #   CI_CLANG_VERSION            (e.g., "clang-r416183c1")
+    #
+    # --- VERSION & HASH STRINGS (Expects: Release tags or specific Git SHAs) ---
+    #   CI_KSUN_CHECKOUT_HASH       CI_KSU_CHECKOUT_HASH     CI_SUKI_CHECKOUT_HASH
+    #   CI_SUSFS_CHECKOUT_HASH      CI_KPM_VERSION           CI_APATCH_VER
+    #   CI_KPTOOLS_VER
+    # ==============================================================================
+
+    # If not running in CI, exit this function immediately
+    if [[ "${CI_RUN:-0}" != "1" ]]; then
+        return 0 
+    fi
+
+    log_section "CI Environment Detected: Applying Automated Overrides"
+
+    # Forcefully disable interactive breakpoints in CI so the runner doesn't hang forever
+    ENABLE_BREAKPOINTS=0
+
+    # Base Setup & Naming Overrides (Fallback to script defaults)
+    FINAL_KERNEL_ZIP="${CI_KERNEL_NAME:-""}"
+    KERNEL_DEFCONFIG="${CI_KERNEL_DEFCONFIG:-$KERNEL_DEFCONFIG}"
+
+    AK3_REPO="${CI_AK3_REPO:-$AK3_REPO}"
+    AK3_BRANCH="${CI_AK3_BRANCH:-$AK3_BRANCH}"
+
+    ARTIFACT="${CI_ARTIFACT:-$ARTIFACT}"
+
+    MODULES_NAME="${CI_MODULES_NAME:-$MODULES_NAME}"
+    BUILD_MODULES="${CI_BUILD_MODULES:-$BUILD_MODULES}"
+
+    # Toolchain Overrides
+    TOOLCHAIN_DIR="${CI_TOOLCHAIN_DIR:-$TOOLCHAIN_DIR}"
+    CLANG_VERSION="${CI_CLANG_VERSION:-$CLANG_VERSION}"
+
+    # Recalculate dependent paths just in case CI changed the toolchain dir or clang version
+    CLANG_DIR="$TOOLCHAIN_DIR/$CLANG_VERSION"
+    CLANG_BINARY="$CLANG_DIR/bin/clang"
+
+    # ---------------------------------------------------------
+    # Root (Strict CI Rule: Default to 0 unless exported)
+    # ---------------------------------------------------------
+
+    # KernelSU-Next
+    ENABLE_KSU_NEXT="${CI_ENABLE_KSU_NEXT:-0}"
+    KSU_NEXT_STABLE="${CI_KSU_NEXT_STABLE:-$KSU_NEXT_STABLE}"
+    KSU_NEXT_MANUAL_HOOKS="${CI_KSU_NEXT_MANUAL_HOOKS:-$KSU_NEXT_MANUAL_HOOKS}"
+    KSUN_CHECKOUT_HASH="${CI_KSUN_CHECKOUT_HASH:-$KSUN_CHECKOUT_HASH}"
+
+    # SUKISU-Ultra
+    ENABLE_SUKISU="${CI_ENABLE_SUKISU:-0}"
+    SUKI_MANUAL_HOOKS="${CI_SUKI_MANUAL_HOOKS:-$SUKI_MANUAL_HOOKS}"
+    SUKI_TRACEPOINTS_HOOK="${CI_SUKI_TRACEPOINTS_HOOK:-$SUKI_TRACEPOINTS_HOOK}"
+    SUKI_CHECKOUT_HASH="${CI_SUKI_CHECKOUT_HASH:-$SUKI_CHECKOUT_HASH}"
+    PATCH_KPM="${CI_PATCH_KPM:-0}"
+    KPM_VERSION="${CI_KPM_VERSION:-$KPM_VERSION}"
+
+    # Original KernelSU
+    ENABLE_KSU="${CI_ENABLE_KSU:-0}"
+    KSU_CHECKOUT_HASH="${CI_KSU_CHECKOUT_HASH:-$KSU_CHECKOUT_HASH}"
+
+    # SUSFS Overrides
+    PATCH_SUSFS="${CI_PATCH_SUSFS:-0}"
+    SUSFS_CHECKOUT_HASH="${CI_SUSFS_CHECKOUT_HASH:-$SUSFS_CHECKOUT_HASH}"
+
+    # APatch
+    ENABLE_APATCH="${CI_ENABLE_APATCH:-0}"
+    APATCH_VER="${CI_APATCH_VER:-$APATCH_VER}"
+    KPTOOLS_VER="${CI_KPTOOLS_VER:-$KPTOOLS_VER}"
+    
+    # Test set superkey
+    if [[ "$ENABLE_APATCH" == "1" ]]; then
+        SUPER_KEY="${CI_SUPER_KEY:-""}"
+        if ! check_superkey "$SUPER_KEY"; then
+            echo -e "${red}CI FATAL ERROR: APatch is enabled, but CI_SUPER_KEY is missing or invalid!${nocol}"
+            echo -e "${yellow}The key must be at least 8 characters and contain both letters and numbers.${nocol}"
+            exit 1
+        fi
+        export SUPER_KEY
+    fi
+
+    # ---------------------------------------------------------
+
+    echo -e "${green}CI Overrides Applied Successfully!${nocol}"
+    echo -e "Kernel Defconfig : $KERNEL_DEFCONFIG"
+    echo -e "Clang Version    : $CLANG_VERSION"
+    echo -e "Modules Name     : $MODULES_NAME"
+    
+    # Just a quick printout of which root solution got enabled for the CI logs
+    if [[ "$ENABLE_KSU_NEXT" == "1" ]]; then echo -e "Root Solution    : KernelSU-Next"; fi
+    if [[ "$ENABLE_SUKISU" == "1" ]]; then echo -e "Root Solution    : SUKISU-Ultra"; fi
+    if [[ "$ENABLE_KSU" == "1" ]]; then echo -e "Root Solution    : KernelSU (Stock)"; fi
+    if [[ "$ENABLE_APATCH" == "1" ]]; then echo -e "Root Solution    : APatch"; fi
+}
+
 # ------------------- # Call and test functions as needed # ------------------------------- # 
 
 main() {
+    # CI overrides first
+    CI_Setup
+
+    check_KSUN_configs
     start
     # Clean previous build artifacts
     clean_kernel
