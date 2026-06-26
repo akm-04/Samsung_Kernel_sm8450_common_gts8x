@@ -33,7 +33,7 @@ echo  # Blank line
 KERNEL_DEFCONFIG=gts8uwifi_waipio_defconfig  # Looks for defconfig in arch/<exported_arch>/configs/
 ANYKERNEL3_DIR=$PWD/AnyKernel3/ # Required by the function zip_kernel
 AK3_REPO="https://github.com/akm-04/AnyKernel3.git"
-AK3_BRANCH="gts8x"
+AK3_BRANCH="gts8u"
 MODULES_NAME="Kernel_Modules-Magisk"
 
 
