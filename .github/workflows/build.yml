@@ -1,5 +1,28 @@
 name: Build Kernel
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
+    inputs:
+      root_solution:
+        description: 'Choose Root Method'
+        required: true
+        type: choice
+        default: 'KernelSU-Next'
+        options:
+          - KernelSU-Next
+          - APatch
+          - None
+      hook_method:
+        description: 'Hook Implementation (For KSUN)'
+        required: true
+        type: choice
+        default: 'Manual Hooks'
+        options:
+          - None (Kprobes)
+          - Manual Hooks
+      apatch_superkey:
+        description: 'APatch SuperKey (Visible in run history! Required for APatch)'
+        required: false
+        type: string
 
 jobs:
   build:
@@ -7,15 +30,56 @@ jobs:
     timeout-minutes: 350
     env:
       CI_RUN: "1"
-      CI_ENABLE_KSU_NEXT: "1"
       CI_TOOLCHAIN_DIR: ${{ github.workspace }}/Clang
+      
+      # --- Root Solution Map ---
+      CI_ENABLE_KSU_NEXT: ${{ inputs.root_solution == 'KernelSU-Next' && '1' || '0' }}
+      CI_ENABLE_APATCH: ${{ inputs.root_solution == 'APatch' && '1' || '0' }}
+      CI_SUPER_KEY: ${{ inputs.apatch_superkey }}
+      
+      # --- Hook Map ---
+      CI_KSU_NEXT_MANUAL_HOOKS: ${{ inputs.hook_method == 'Manual Hooks' && '1' || '0' }}
+
     steps:
-      - name: Compute short branch and Timestamp
+      - name: Validate APatch SuperKey
+        if: ${{ inputs.root_solution == 'APatch' }}
+        env:
+          KEY: ${{ inputs.apatch_superkey }}
+        run: |
+          if [[ ${#KEY} -lt 8 ]] || ! [[ "$KEY" =~ [a-zA-Z] && "$KEY" =~ [0-9] ]]; then
+            echo "::error::SuperKey must be at least 8 characters and contain both letters and numbers."
+            exit 1
+          fi
+
+      - name: Compute Build Variables & Dynamic Names
         run: |
           SHORT_BRANCH=$(echo "${{ github.ref_name }}" | cut -d'_' -f1,2)
           TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+          
+          # Grab the dropdown inputs
+          ROOT="${{ inputs.root_solution }}"
+          HOOK="${{ inputs.hook_method }}"
+          
+          # Format the file suffix and display name dynamically
+          if [ "$ROOT" == "None" ]; then
+            ROOT_SUFFIX=""
+            DISPLAY_NAME="Vanilla"
+          elif [ "$ROOT" == "KernelSU-Next" ]; then
+            ROOT_SUFFIX="-KernelSU-Next"
+            DISPLAY_NAME="KernelSU-Next ($HOOK)"
+          elif [ "$ROOT" == "APatch" ]; then
+            ROOT_SUFFIX="-APatch"
+            DISPLAY_NAME="APatch"
+          fi
+          
+          # Final Zip Name string (e.g. A15_common-5.10.226-KernelSU-Next-flashable-20260627_12333)
+          ARTIFACT_NAME="${SHORT_BRANCH}${ROOT_SUFFIX}-flashable-${TIMESTAMP}"
+          
+          # Export everything to the environment for later steps
           echo "SHORT_BRANCH=$SHORT_BRANCH" >> "$GITHUB_ENV"
           echo "TIMESTAMP=$TIMESTAMP" >> "$GITHUB_ENV"
+          echo "ARTIFACT_NAME=$ARTIFACT_NAME" >> "$GITHUB_ENV"
+          echo "DISPLAY_NAME=$DISPLAY_NAME" >> "$GITHUB_ENV"
 
       - name: Check starting disk space
         run: df -h /
@@ -76,7 +140,8 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.SHORT_BRANCH }}-flashable-${{ env.TIMESTAMP }}
+          # Use our new dynamically generated zip name here
+          name: ${{ env.ARTIFACT_NAME }}
           path: |
             AnyKernel3/*
             !AnyKernel3/*.zip
@@ -92,5 +157,6 @@ jobs:
         if: success()
         run: |
           echo "### Download Link (No Login Required)" >> $GITHUB_STEP_SUMMARY
-          echo "This link bypasses the GitHub login requirement and downloads this exact build." >> $GITHUB_STEP_SUMMARY
-          echo "[Download ${{ env.SHORT_BRANCH }} Kernel](https://nightly.link/${{ github.repository }}/actions/runs/${{ github.run_id }}/${{ env.SHORT_BRANCH }}-flashable-${{ env.TIMESTAMP }}.zip)" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Variant:** ${{ env.DISPLAY_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "This link downloads this exact build." >> $GITHUB_STEP_SUMMARY
+          echo "[Download ${{ env.DISPLAY_NAME }} Kernel](https://nightly.link/${{ github.repository }}/actions/runs/${{ github.run_id }}/${{ env.ARTIFACT_NAME }}.zip)" >> $GITHUB_STEP_SUMMARY
