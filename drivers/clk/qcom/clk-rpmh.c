@@ -11,6 +11,7 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
+#include <linux/clk.h>
 #include <soc/qcom/cmd-db.h>
 #include <soc/qcom/rpmh.h>
 #include <soc/qcom/tcs.h>
@@ -280,6 +281,9 @@ static int clk_rpmh_bcm_send_cmd(struct clk_rpmh *c, bool enable)
 	} else {
 		cmd_state = 0;
 	}
+
+	if (cmd_state > BCM_TCS_CMD_VOTE_MASK)
+		cmd_state = BCM_TCS_CMD_VOTE_MASK;
 
 	if (c->last_sent_aggr_state != cmd_state) {
 		cmd.addr = c->res_addr;
@@ -608,6 +612,30 @@ static const struct clk_rpmh_desc clk_rpmh_neo = {
 	.num_clks = ARRAY_SIZE(neo_rpmh_clocks),
 };
 
+DEFINE_CLK_RPMH_VRM(anorak, rf_clk1, rf_clk1_ao, "clka1", 1);
+DEFINE_CLK_RPMH_VRM(anorak, ln_bb_clk7, ln_bb_clk7_ao, "clka7", 2);
+DEFINE_CLK_RPMH_VRM(anorak, ln_bb_clk8, ln_bb_clk8_ao, "clka8", 4);
+DEFINE_CLK_RPMH_VRM(anorak, ln_bb_clk9, ln_bb_clk9_ao, "clka9", 2);
+
+static struct clk_hw *anorak_rpmh_clocks[] = {
+	[RPMH_CXO_CLK]		= &waipio_bi_tcxo.hw,
+	[RPMH_CXO_CLK_A]	= &waipio_bi_tcxo_ao.hw,
+	[RPMH_LN_BB_CLK7]	= &anorak_ln_bb_clk7.hw,
+	[RPMH_LN_BB_CLK7_A]	= &anorak_ln_bb_clk7_ao.hw,
+	[RPMH_LN_BB_CLK8]	= &anorak_ln_bb_clk8.hw,
+	[RPMH_LN_BB_CLK8_A]	= &anorak_ln_bb_clk8_ao.hw,
+	[RPMH_LN_BB_CLK9]	= &anorak_ln_bb_clk9.hw,
+	[RPMH_LN_BB_CLK9_A]	= &anorak_ln_bb_clk9_ao.hw,
+	[RPMH_RF_CLK1]		= &anorak_rf_clk1.hw,
+	[RPMH_RF_CLK1_A]	= &anorak_rf_clk1_ao.hw,
+	[RPMH_IPA_CLK]		= &lahaina_ipa.hw,
+};
+
+static const struct clk_rpmh_desc clk_rpmh_anorak = {
+	.clks = anorak_rpmh_clocks,
+	.num_clks = ARRAY_SIZE(anorak_rpmh_clocks),
+};
+
 DEFINE_CLK_RPMH_ARC(sdxlemur, bi_tcxo, bi_tcxo_ao, "xo.lvl", 0x3, 4);
 DEFINE_CLK_RPMH_VRM(sdxlemur, ln_bb_clk1, ln_bb_clk1_ao, "lnbclka1", 4);
 DEFINE_CLK_RPMH_BCM(sdxlemur, qpic_clk, "QP0");
@@ -657,6 +685,27 @@ static const struct clk_rpmh_desc clk_rpmh_parrot = {
 	.num_clks = ARRAY_SIZE(parrot_rpmh_clocks),
 };
 
+DEFINE_CLK_RPMH_VRM(ravelin, ln_bb_clk3, ln_bb_clk3_ao, "lnbclka3", 4);
+
+static struct clk_hw *ravelin_rpmh_clocks[] = {
+	[RPMH_CXO_CLK]		= &waipio_bi_tcxo.hw,
+	[RPMH_CXO_CLK_A]	= &waipio_bi_tcxo_ao.hw,
+	[RPMH_LN_BB_CLK2]	= &waipio_ln_bb_clk2.hw,
+	[RPMH_LN_BB_CLK2_A]	= &waipio_ln_bb_clk2_ao.hw,
+	[RPMH_LN_BB_CLK3]	= &ravelin_ln_bb_clk3.hw,
+	[RPMH_LN_BB_CLK3_A]	= &ravelin_ln_bb_clk3_ao.hw,
+	[RPMH_RF_CLK1]		= &lahaina_rf_clk1.hw,
+	[RPMH_RF_CLK1_A]	= &lahaina_rf_clk1_ao.hw,
+	[RPMH_RF_CLK5]		= &waipio_rf_clk5.hw,
+	[RPMH_RF_CLK5_A]	= &waipio_rf_clk5_ao.hw,
+	[RPMH_IPA_CLK]		= &lahaina_ipa.hw,
+};
+
+static const struct clk_rpmh_desc clk_rpmh_ravelin = {
+	.clks = ravelin_rpmh_clocks,
+	.num_clks = ARRAY_SIZE(ravelin_rpmh_clocks),
+};
+
 static struct clk_hw *of_clk_rpmh_hw_get(struct of_phandle_args *clkspec,
 					 void *data)
 {
@@ -678,6 +727,36 @@ static struct clk_hw *of_clk_rpmh_hw_get(struct of_phandle_args *clkspec,
 
 	return rpmh->clks[idx];
 }
+
+static ssize_t show_xo_vote(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return 0;
+}
+
+static ssize_t store_xo_vote(struct device *dev,
+			     struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	const struct clk_rpmh_desc *desc;
+	struct clk *clk;
+	int ret;
+
+	desc = of_device_get_match_data(dev);
+	if (!desc) {
+		pr_err("%s: no match data\n", __func__);
+		return 0;
+	}
+
+	pr_err("%s: voting for bi_tcxo\n", __func__);
+
+	clk = desc->clks[RPMH_CXO_CLK]->clk;
+	ret = clk_prepare_enable(clk);
+
+	return !ret ? count : ret;
+}
+
+static DEVICE_ATTR(xo_vote, 0644, show_xo_vote, store_xo_vote);
 
 static int clk_rpmh_probe(struct platform_device *pdev)
 {
@@ -743,6 +822,8 @@ static int clk_rpmh_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	device_create_file(&pdev->dev, &dev_attr_xo_vote);
+
 	dev_dbg(&pdev->dev, "Registered RPMh clocks\n");
 
 	return 0;
@@ -761,6 +842,8 @@ static const struct of_device_id clk_rpmh_match_table[] = {
 	{ .compatible = "qcom,diwali-rpmh-clk", .data = &clk_rpmh_diwali},
 	{ .compatible = "qcom,neo-rpmh-clk", .data = &clk_rpmh_neo},
 	{ .compatible = "qcom,parrot-rpmh-clk", .data = &clk_rpmh_parrot},
+	{ .compatible = "qcom,anorak-rpmh-clk", .data = &clk_rpmh_anorak},
+	{ .compatible = "qcom,ravelin-rpmh-clk", .data = &clk_rpmh_ravelin},
 	{ }
 };
 MODULE_DEVICE_TABLE(of, clk_rpmh_match_table);

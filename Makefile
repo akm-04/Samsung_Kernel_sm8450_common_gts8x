@@ -525,7 +525,11 @@ KBUILD_LDFLAGS_MODULE :=
 KBUILD_LDFLAGS :=
 CLANG_FLAGS :=
 
+ifeq ($(CONFIG_SEC_KUNIT),n)
 CC := scripts/basic/cc-wrapper $(CC)
+else
+CC := $(abs_srctree)/tools/cc-wrapper $(CC)
+endif
 
 export ARCH SRCARCH CONFIG_SHELL BASH HOSTCC KBUILD_HOSTCFLAGS CROSS_COMPILE LD CC
 export CPP AR NM STRIP OBJCOPY OBJDUMP READELF PAHOLE RESOLVE_BTFIDS LEX YACC AWK INSTALLKERNEL
@@ -918,7 +922,7 @@ endif
 
 ifdef CONFIG_SHADOW_CALL_STACK
 CC_FLAGS_SCS	:= -fsanitize=shadow-call-stack
-KBUILD_CFLAGS	+= $(CC_FLAGS_SCS)
+KBUILD_CFLAGS_MODULE	+= $(CC_FLAGS_SCS)
 export CC_FLAGS_SCS
 endif
 
@@ -963,7 +967,7 @@ endif
 
 # If LTO flags are filtered out, we must also filter out CFI.
 CC_FLAGS_LTO	+= $(CC_FLAGS_CFI)
-KBUILD_CFLAGS	+= $(CC_FLAGS_CFI)
+KBUILD_CFLAGS_MODULE	+= $(CC_FLAGS_CFI)
 export CC_FLAGS_CFI
 endif
 
@@ -1351,7 +1355,7 @@ $(sort $(vmlinux-deps) $(subdir-modorder)): descend ;
 
 filechk_kernel.release = \
 	echo "$(KERNELVERSION)$$($(CONFIG_SHELL) $(srctree)/scripts/setlocalversion \
-		$(srctree) $(BRANCH) $(KMI_GENERATION))"
+		$(srctree) $(GOOGLE_BRANCH) $(KMI_GENERATION))"
 
 # Store (new) KERNELRELEASE string in include/config/kernel.release
 include/config/kernel.release: FORCE
@@ -1620,6 +1624,9 @@ PHONY += archclean vmlinuxclean
 vmlinuxclean:
 	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/link-vmlinux.sh clean
 	$(Q)$(if $(ARCH_POSTLINK), $(MAKE) -f $(ARCH_POSTLINK) clean)
+
+legoclean:
+	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/lego/kclean.sh $(srctree)/.legofile
 
 clean: archclean vmlinuxclean resolve_btfids_clean
 
@@ -1954,7 +1961,7 @@ clean: $(clean-dirs)
 		-o -name '.tmp_*.o.*' \
 		-o -name '*.c.[012]*.*' \
 		-o -name '*.ll' \
-		-o -name '*.gcno' \
+		-o -name '*.gcno' -o -name '*.gcda' \
 		-o -name '*.*.symversions' \) -type f -print | xargs rm -f
 
 # Generate tags for editors
@@ -2038,7 +2045,7 @@ checkstack:
 
 kernelrelease:
 	@echo "$(KERNELVERSION)$$($(CONFIG_SHELL) $(srctree)/scripts/setlocalversion \
-		$(srctree) $(BRANCH) $(KMI_GENERATION))"
+		$(srctree) $(GOOGLE_BRANCH) $(KMI_GENERATION))"
 
 kernelversion:
 	@echo $(KERNELVERSION)

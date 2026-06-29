@@ -781,6 +781,14 @@ static int a6xx_gpu_boot(struct adreno_device *adreno_dev)
 		goto err_oob_clear;
 	}
 
+	/*
+	 * At this point it is safe to assume that we recovered. Setting
+	 * this field allows us to take a new snapshot for the next failure
+	 * if we are prioritizing the first unrecoverable snapshot.
+	 */
+	if (device->snapshot)
+		device->snapshot->recovered = true;
+
 	/* Start the dispatcher */
 	adreno_dispatcher_start(device);
 
@@ -862,7 +870,7 @@ static void rgmu_idle_check(struct work_struct *work)
 		kgsl_start_idle_timer(device);
 		goto done;
 	}
-
+		
 	spin_lock(&device->submit_lock);
 
 	if (device->submit_now) {
@@ -919,7 +927,6 @@ static int a6xx_boot(struct adreno_device *adreno_dev)
 	set_bit(RGMU_PRIV_GPU_STARTED, &rgmu->flags);
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 	return 0;
@@ -957,7 +964,6 @@ static void a6xx_rgmu_touch_wakeup(struct adreno_device *adreno_dev)
 	set_bit(RGMU_PRIV_GPU_STARTED, &rgmu->flags);
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 done:
@@ -1029,7 +1035,6 @@ static int a6xx_first_boot(struct adreno_device *adreno_dev)
 	device->pwrscale.devfreq_enabled = true;
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 	return 0;

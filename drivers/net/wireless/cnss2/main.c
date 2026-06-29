@@ -26,6 +26,8 @@
 #include "genl.h"
 #include "reg.h"
 
+#include <linux/thermal.h>
+
 #define CNSS_DUMP_FORMAT_VER		0x11
 #define CNSS_DUMP_FORMAT_VER_V2		0x22
 #define CNSS_DUMP_MAGIC_VER_V2		0x42445953
@@ -88,6 +90,26 @@ struct cnss_driver_event {
 	int ret;
 	void *data;
 };
+
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+/**
+ * enum driver_status: Driver Modules status
+ * @DRIVER_MODULES_UNINITIALIZED: Driver CDS modules uninitialized
+ * @DRIVER_MODULES_ENABLED: Driver CDS modules opened
+ * @DRIVER_MODULES_CLOSED: Driver CDS modules closed
+ */
+enum driver_modules_status {
+	DRIVER_MODULES_UNINITIALIZED,
+	DRIVER_MODULES_ENABLED,
+	DRIVER_MODULES_CLOSED
+};
+
+enum driver_modules_status current_driver_status = DRIVER_MODULES_UNINITIALIZED;
+char ver_info[512] = {0,};
+char softap_info[512] = {0,};
+int dump_in_progress = 0;
+#define MACLOADER_TIMEOUT                 10000
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 
 static void cnss_set_plat_priv(struct platform_device *plat_dev,
 			       struct cnss_plat_data *plat_priv)
@@ -479,7 +501,10 @@ static int cnss_fw_mem_ready_hdlr(struct cnss_plat_data *plat_priv)
 
 	if (plat_priv->hds_enabled)
 		cnss_wlfw_bdf_dnld_send_sync(plat_priv, CNSS_BDF_HDS);
+
 	cnss_wlfw_bdf_dnld_send_sync(plat_priv, CNSS_BDF_REGDB);
+
+	cnss_wlfw_ini_file_send_sync(plat_priv, WLFW_CONN_ROAM_INI_V01);
 
 	ret = cnss_wlfw_bdf_dnld_send_sync(plat_priv,
 					   plat_priv->ctrl_params.bdf_type);
@@ -1589,6 +1614,9 @@ static const char *cnss_recovery_reason_to_str(enum cnss_recovery_reason reason)
 static int cnss_do_recovery(struct cnss_plat_data *plat_priv,
 			    enum cnss_recovery_reason reason)
 {
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	cnss_pr_err("%s\n", ver_info);
+#endif
 	plat_priv->recovery_count++;
 
 	if (plat_priv->device_id == QCA6174_DEVICE_ID)
@@ -1896,6 +1924,13 @@ static int cnss_cold_boot_cal_start_hdlr(struct cnss_plat_data *plat_priv)
 {
 	int ret = 0;
 	u32 retry = 0, timeout;
+
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	if (!wait_for_completion_timeout(
+			&plat_priv->macloader_done,
+			msecs_to_jiffies(MACLOADER_TIMEOUT)))
+		cnss_pr_info("macloader_done timeout\n");
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 
 	if (test_bit(CNSS_COLD_BOOT_CAL_DONE, &plat_priv->driver_state)) {
 		cnss_pr_dbg("Calibration complete. Ignore calibration req\n");
@@ -2493,8 +2528,12 @@ int cnss_do_elf_ramdump(struct cnss_plat_data *plat_priv)
 	struct list_head head;
 	int i, ret = 0;
 
+#ifndef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
 	if (!dump_enabled()) {
-		cnss_pr_info("Dump collection is not enabled\n");
+#else
+    if (!plat_priv->dump_mode) {
+#endif
+		cnss_pr_err("Dump collection is not enabled\n");
 		return ret;
 	}
 
@@ -3250,6 +3289,22 @@ static ssize_t charger_mode_store(struct device *dev,
 	cnss_pr_dbg("Received Charger Mode: %d\n", tmp);
 	return count;
 }
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+static ssize_t dump_mode_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct cnss_plat_data *plat_priv = dev_get_drvdata(dev);
+	int tmp = 0;
+
+	if (sscanf(buf, "%du", &tmp) != 1)
+		return -EINVAL;
+
+	plat_priv->dump_mode = tmp;
+	cnss_pr_err("Received Dump Mode: %d\n", tmp);
+	return count;
+}
+#endif
 
 static DEVICE_ATTR_WO(fs_ready);
 static DEVICE_ATTR_WO(shutdown);
@@ -3261,6 +3316,9 @@ static DEVICE_ATTR_WO(qdss_conf_download);
 static DEVICE_ATTR_WO(hw_trace_override);
 static DEVICE_ATTR_WO(charger_mode);
 static DEVICE_ATTR_RW(time_sync_period);
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+static DEVICE_ATTR_WO(dump_mode);
+#endif
 
 static struct attribute *cnss_attrs[] = {
 	&dev_attr_fs_ready.attr,
@@ -3272,6 +3330,9 @@ static struct attribute *cnss_attrs[] = {
 	&dev_attr_qdss_conf_download.attr,
 	&dev_attr_hw_trace_override.attr,
 	&dev_attr_charger_mode.attr,
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	&dev_attr_dump_mode.attr,
+#endif
 	&dev_attr_time_sync_period.attr,
 	NULL,
 };
@@ -3314,6 +3375,243 @@ static void cnss_remove_sysfs_link(struct cnss_plat_data *plat_priv)
 	sysfs_remove_link(kernel_kobj, "cnss");
 }
 
+void cnss_disable_ssr(void)
+{
+	struct cnss_plat_data *plat_priv = cnss_get_plat_priv(NULL);
+
+	if (plat_priv == NULL) {
+		cnss_pr_err("plat_priv is NULL");
+		goto out;
+	}
+
+	plat_priv->recovery_enabled = false;
+	cnss_pr_err("SSR got disabled %d", plat_priv->recovery_enabled);
+out:
+ return;
+}
+EXPORT_SYMBOL(cnss_disable_ssr);
+
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+void cnss_sysfs_update_driver_status(int32_t new_status, void *version, void *softap)
+{
+	if (new_status == DRIVER_MODULES_ENABLED) {
+		memcpy(ver_info, version, 512);
+		memcpy(softap_info, softap, 512);
+	}
+	current_driver_status = new_status;
+}
+EXPORT_SYMBOL(cnss_sysfs_update_driver_status);
+
+#define MAC_ADDR_SIZE 6
+uint8_t mac_from_macloader[MAC_ADDR_SIZE] = {0,0,0,0,0,0};
+int pm_from_macloader = 0;
+int ant_from_macloader = 0;
+int memdump_from_macloader = 0;
+
+extern int cnss_utils_set_wlan_mac_address(const u8 *mac_list, const uint32_t len);
+static ssize_t store_mac_addr(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf,
+			    size_t count)
+{
+
+	if (!plat_env)
+		return count;
+
+	sscanf(buf, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+		(const u8*)&mac_from_macloader[0],
+		(const u8*)&mac_from_macloader[1],
+		(const u8*)&mac_from_macloader[2],
+		(const u8*)&mac_from_macloader[3],
+		(const u8*)&mac_from_macloader[4],
+		(const u8*)&mac_from_macloader[5]);
+
+	cnss_pr_info("Assigning MAC from Macloader %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx\n",
+		mac_from_macloader[0], mac_from_macloader[1],mac_from_macloader[2],
+		mac_from_macloader[3], mac_from_macloader[4],mac_from_macloader[5]);
+
+	cnss_utils_set_wlan_mac_address(mac_from_macloader, MAC_ADDR_SIZE);
+	complete(&plat_env->macloader_done);
+
+	return count;
+}
+
+static ssize_t show_verinfo(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 char *buf)
+{
+	return scnprintf(buf, 512, "%s", ver_info);
+}
+
+static ssize_t show_softapinfo(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 char *buf)
+{
+	return scnprintf(buf, 512, "%s", softap_info);
+}
+
+static ssize_t show_qcwlanstate(struct kobject *kobj,
+                                struct kobj_attribute *attr,
+                                char *buf)
+{
+       char status[20];
+       static const char wlan_off_str[] = "OFF";
+       static const char wlan_on_str[] = "ON";
+
+       switch (current_driver_status) {
+               case DRIVER_MODULES_UNINITIALIZED:
+               case DRIVER_MODULES_CLOSED:
+                       cnss_pr_info("Modules not initialized just return");
+                       memset(status, '\0', sizeof("OFF"));
+                       memcpy(status, wlan_off_str, sizeof("OFF"));
+                       break;
+               case DRIVER_MODULES_ENABLED:
+                       cnss_pr_info("Modules enabled");
+                       memset(status, '\0', sizeof("ON"));
+                       memcpy(status, wlan_on_str, sizeof("ON"));
+                       break;
+       }
+
+       return scnprintf(buf, PAGE_SIZE, "%s", status);
+}
+
+static ssize_t store_pm_info(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf,
+			    size_t count)
+{
+	cnss_pr_info("%s enter\n", __func__);
+	sscanf(buf, "%d", &pm_from_macloader);
+	pm_from_macloader = !pm_from_macloader;
+	cnss_pr_info("pm_from_macloader %d\n", pm_from_macloader);
+
+	return count;
+}
+
+int cnss_sysfs_get_pm_info(void)
+{
+	return pm_from_macloader;
+}
+EXPORT_SYMBOL(cnss_sysfs_get_pm_info);
+
+static ssize_t store_ant_info(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf,
+			    size_t count)
+{
+	cnss_pr_info("%s enter\n", __func__);
+	sscanf(buf, "%d", &ant_from_macloader);
+	cnss_pr_info("ant_from_macloader %d\n", ant_from_macloader);
+
+	return count;
+}
+
+static ssize_t store_memdump_info(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf,
+			    size_t count)
+{
+	cnss_pr_info("%s called\n", __func__);
+	sscanf(buf, "%d", &memdump_from_macloader);
+	cnss_pr_info("memdump_from_macloader %d\n", memdump_from_macloader);
+	return count;
+}
+
+static ssize_t show_memdump_info(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 char *buf)
+{
+	return scnprintf(buf, 512, "%d", memdump_from_macloader);
+}
+
+static ssize_t show_dump_in_progress(struct kobject *kobj,
+				 struct kobj_attribute *attr,
+				 char *buf)
+{
+	return scnprintf(buf, 512, "%d", dump_in_progress);
+}
+
+static ssize_t store_dump_in_progress(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf,
+			    size_t count)
+{
+	cnss_pr_info("%s enter\n", __func__);
+	sscanf(buf, "%d", &dump_in_progress);
+	cnss_pr_info("dump_in_progress %d\n", dump_in_progress);
+
+	return count;
+}
+
+static struct kobj_attribute sec_mac_addr_attribute =
+        __ATTR(mac_addr, 0220, NULL, store_mac_addr);
+static struct kobj_attribute sec_verinfo_sysfs_attribute =
+	__ATTR(wifiver, 0440, show_verinfo, NULL);
+static struct kobj_attribute sec_softapinfo_sysfs_attribute =
+	__ATTR(softap, 0440, show_softapinfo, NULL);
+static struct kobj_attribute qcwlanstate_attribute =
+       __ATTR(qcwlanstate, 0440, show_qcwlanstate, NULL);
+static struct kobj_attribute sec_pminfo_sysfs_attribute =
+       __ATTR(pm, 0220, NULL, store_pm_info);
+static struct kobj_attribute sec_antinfo_sysfs_attribute =
+       __ATTR(ant, 0220, NULL, store_ant_info);
+static struct kobj_attribute sec_memdumpinfo_sysfs_attribute =
+	__ATTR(memdump, 0660, show_memdump_info, store_memdump_info);
+static struct kobj_attribute sec_dump_in_progress_attribute =
+	__ATTR(dump_in_progress, 0660, show_dump_in_progress,
+	       store_dump_in_progress);
+
+
+
+static struct attribute *sec_sysfs_attrs[] = {
+	&sec_mac_addr_attribute.attr,
+	&sec_verinfo_sysfs_attribute.attr,
+	&sec_softapinfo_sysfs_attribute.attr,
+	&qcwlanstate_attribute.attr,
+	&sec_pminfo_sysfs_attribute.attr,
+	&sec_antinfo_sysfs_attribute.attr,
+	&sec_memdumpinfo_sysfs_attribute.attr,
+	&sec_dump_in_progress_attribute.attr,
+	NULL
+};
+
+static struct attribute_group sec_sysfs_attr_group = {
+        .attrs = sec_sysfs_attrs,
+};
+
+static int sec_create_wifi_sysfs(struct cnss_plat_data *plat_priv)
+{
+	int ret = 0;
+
+	plat_priv->wifi_kobj = kobject_create_and_add("wifi", NULL);
+	if (!plat_priv->wifi_kobj) {
+		cnss_pr_err("Failed to create shutdown_wlan kernel object\n");
+		return -ENOMEM;
+	}
+
+        ret = sysfs_create_group(plat_priv->wifi_kobj, &sec_sysfs_attr_group);
+        if (ret) {
+                cnss_pr_err("could not create group %d", ret);
+		kobject_put(plat_priv->wifi_kobj);
+		plat_priv->wifi_kobj = NULL;
+	}
+
+	cnss_pr_info("%s done\n", __func__);
+
+	return ret;
+}
+
+static void sec_remove_wifi_sysfs(struct cnss_plat_data *plat_priv)
+{
+	if (plat_priv->wifi_kobj) {
+		sysfs_remove_group(plat_priv->wifi_kobj,
+				  &sec_sysfs_attr_group);
+		kobject_put(plat_priv->wifi_kobj);
+		plat_priv->wifi_kobj = NULL;
+	}
+}
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
+
 static int cnss_create_sysfs(struct cnss_plat_data *plat_priv)
 {
 	int ret = 0;
@@ -3327,6 +3625,10 @@ static int cnss_create_sysfs(struct cnss_plat_data *plat_priv)
 	}
 
 	cnss_create_sysfs_link(plat_priv);
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	sec_create_wifi_sysfs(plat_priv);
+	init_completion(&plat_priv->macloader_done);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 
 	return 0;
 out:
@@ -3336,6 +3638,10 @@ out:
 static void cnss_remove_sysfs(struct cnss_plat_data *plat_priv)
 {
 	cnss_remove_sysfs_link(plat_priv);
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	sec_remove_wifi_sysfs(plat_priv);
+	complete_all(&plat_priv->macloader_done);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 	devm_device_remove_group(&plat_priv->plat_dev->dev, &cnss_attr_group);
 }
 
@@ -3530,6 +3836,238 @@ cnss_use_nv_mac(struct cnss_plat_data *plat_priv)
 				     "use-nv-mac");
 }
 
+#if defined(CONFIG_SEC_SS_CNSS_FEATURE_SYSFS) && defined(CONFIG_SEC_FACTORY)
+#include <linux/of_gpio.h>
+int cnss_get_subpcb_det_gpio_value(struct cnss_plat_data *plat_priv)
+{
+	int gpio = -1;
+	int level = 0;
+	struct device *dev;
+
+	dev = &plat_priv->plat_dev->dev;
+
+	gpio = of_get_named_gpio(dev->of_node, "subpcb-det-gpio", 0);
+	if (gpio >= 0) {
+		level = gpio_get_value(gpio);
+	} else {
+		pr_err("cnss: Failed to get subpcb-det-upper-gpio ret = %d\n", gpio);
+		return 0;
+	}
+
+	pr_err("cnss: subpcb-det-gpio level %d\n", level);
+	return level;
+}
+#endif
+
+int cnss_set_wfc_mode(struct device *dev, struct cnss_wfc_cfg cfg)
+{
+    struct cnss_plat_data *plat_priv = cnss_bus_dev_to_plat_priv(dev);
+    int ret = 0;
+
+    if (!plat_priv)
+        return -ENODEV;
+
+    /* If IMS server is connected, return success without QMI send */
+    if (test_bit(CNSS_IMS_CONNECTED, &plat_priv->driver_state)) {
+        cnss_pr_dbg("Ignore host request as IMS server is connected");
+        return ret;
+    }
+
+    ret = cnss_wlfw_send_host_wfc_call_status(plat_priv, cfg);
+
+    return ret;
+}
+EXPORT_SYMBOL(cnss_set_wfc_mode);
+
+static int cnss_tcdev_get_max_state(struct thermal_cooling_device *tcdev,
+				    unsigned long *thermal_state)
+{
+	struct cnss_thermal_cdev *cnss_tcdev = NULL;
+
+	if (!tcdev || !tcdev->devdata) {
+		cnss_pr_err("tcdev or tcdev->devdata is null!\n");
+		return -EINVAL;
+	}
+
+	cnss_tcdev = tcdev->devdata;
+	*thermal_state = cnss_tcdev->max_thermal_state;
+
+	return 0;
+}
+
+static int cnss_tcdev_get_cur_state(struct thermal_cooling_device *tcdev,
+				    unsigned long *thermal_state)
+{
+	struct cnss_thermal_cdev *cnss_tcdev = NULL;
+
+	if (!tcdev || !tcdev->devdata) {
+		cnss_pr_err("tcdev or tcdev->devdata is null!\n");
+		return -EINVAL;
+	}
+
+	cnss_tcdev = tcdev->devdata;
+	*thermal_state = cnss_tcdev->curr_thermal_state;
+
+	return 0;
+}
+
+static int cnss_tcdev_set_cur_state(struct thermal_cooling_device *tcdev,
+				    unsigned long thermal_state)
+{
+	struct cnss_thermal_cdev *cnss_tcdev = NULL;
+	struct cnss_plat_data *plat_priv =  cnss_get_plat_priv(NULL);
+	int ret = 0;
+
+	if (!tcdev || !tcdev->devdata) {
+		cnss_pr_err("tcdev or tcdev->devdata is null!\n");
+		return -EINVAL;
+	}
+
+	cnss_tcdev = tcdev->devdata;
+
+	if (thermal_state > cnss_tcdev->max_thermal_state)
+		return -EINVAL;
+
+	cnss_pr_vdbg("Cooling device set current state: %ld,for cdev id %d",
+		     thermal_state, cnss_tcdev->tcdev_id);
+
+	mutex_lock(&plat_priv->tcdev_lock);
+	ret = cnss_bus_set_therm_cdev_state(plat_priv,
+					    thermal_state,
+					    cnss_tcdev->tcdev_id);
+	if (!ret)
+		cnss_tcdev->curr_thermal_state = thermal_state;
+	mutex_unlock(&plat_priv->tcdev_lock);
+	if (ret) {
+		cnss_pr_err("Setting Current Thermal State Failed: %d,for cdev id %d",
+			    ret, cnss_tcdev->tcdev_id);
+		return ret;
+	}
+
+	return 0;
+}
+
+static struct thermal_cooling_device_ops cnss_cooling_ops = {
+    .get_max_state = cnss_tcdev_get_max_state,
+    .get_cur_state = cnss_tcdev_get_cur_state,
+    .set_cur_state = cnss_tcdev_set_cur_state,
+};
+
+int cnss_thermal_cdev_register(struct device *dev, unsigned long max_state,
+			       int tcdev_id)
+{
+	struct cnss_plat_data *priv = cnss_get_plat_priv(NULL);
+	struct cnss_thermal_cdev *cnss_tcdev = NULL;
+	char cdev_node_name[THERMAL_NAME_LENGTH] = "";
+	struct device_node *dev_node;
+	int ret = 0;
+
+	if (!priv) {
+		cnss_pr_err("Platform driver is not initialized!\n");
+		return -ENODEV;
+	}
+
+	cnss_tcdev = kzalloc(sizeof(*cnss_tcdev), GFP_KERNEL);
+	if (!cnss_tcdev) {
+		cnss_pr_err("Failed to allocate cnss_tcdev object!\n");
+		return -ENOMEM;
+	}
+
+	cnss_tcdev->tcdev_id = tcdev_id;
+	cnss_tcdev->max_thermal_state = max_state;
+
+	snprintf(cdev_node_name, THERMAL_NAME_LENGTH,
+		 "qcom,cnss_cdev%d", tcdev_id);
+
+	dev_node = of_find_node_by_name(NULL, cdev_node_name);
+	if (!dev_node) {
+		cnss_pr_err("Failed to get cooling device node\n");
+		kfree(cnss_tcdev);
+		return -EINVAL;
+	}
+
+	cnss_pr_dbg("tcdev node->name=%s\n", dev_node->name);
+
+	if (of_find_property(dev_node, "#cooling-cells", NULL)) {
+		cnss_tcdev->tcdev = thermal_of_cooling_device_register(dev_node,
+								       cdev_node_name,
+								       cnss_tcdev,
+								       &cnss_cooling_ops);
+		if (IS_ERR_OR_NULL(cnss_tcdev->tcdev)) {
+			ret = PTR_ERR(cnss_tcdev->tcdev);
+			cnss_pr_err("Cooling device register failed: %d, for cdev id %d\n",
+				    ret, cnss_tcdev->tcdev_id);
+			kfree(cnss_tcdev);
+		} else {
+			cnss_pr_dbg("Cooling device registered for cdev id %d",
+				    cnss_tcdev->tcdev_id);
+			mutex_lock(&priv->tcdev_lock);
+			list_add(&cnss_tcdev->tcdev_list,
+				 &priv->cnss_tcdev_list);
+			mutex_unlock(&priv->tcdev_lock);
+		}
+	} else {
+		cnss_pr_dbg("Cooling device registration not supported");
+		kfree(cnss_tcdev);
+		ret = -EOPNOTSUPP;
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL(cnss_thermal_cdev_register);
+
+void cnss_thermal_cdev_unregister(struct device *dev, int tcdev_id)
+{
+	struct cnss_plat_data *priv = cnss_get_plat_priv(NULL);
+	struct cnss_thermal_cdev *cnss_tcdev = NULL;
+
+	if (!priv) {
+		cnss_pr_err("Platform driver is not initialized!\n");
+		return;
+	}
+
+	mutex_lock(&priv->tcdev_lock);
+	while (!list_empty(&priv->cnss_tcdev_list)) {
+		cnss_tcdev = list_first_entry(&priv->cnss_tcdev_list,
+					      struct cnss_thermal_cdev,
+					      tcdev_list);
+		thermal_cooling_device_unregister(cnss_tcdev->tcdev);
+		list_del(&cnss_tcdev->tcdev_list);
+		kfree(cnss_tcdev);
+	}
+	mutex_unlock(&priv->tcdev_lock);
+}
+EXPORT_SYMBOL(cnss_thermal_cdev_unregister);
+
+int cnss_get_curr_therm_cdev_state(struct device *dev,
+				   unsigned long *thermal_state,
+				   int tcdev_id)
+{
+	struct cnss_plat_data *priv = cnss_get_plat_priv(NULL);
+	struct cnss_thermal_cdev *cnss_tcdev = NULL;
+
+	if (!priv) {
+		cnss_pr_err("Platform driver is not initialized!\n");
+		return -ENODEV;
+	}
+
+	mutex_lock(&priv->tcdev_lock);
+	list_for_each_entry(cnss_tcdev, &priv->cnss_tcdev_list, tcdev_list) {
+		if (cnss_tcdev->tcdev_id != tcdev_id)
+			continue;
+
+		*thermal_state = cnss_tcdev->curr_thermal_state;
+		mutex_unlock(&priv->tcdev_lock);
+		cnss_pr_dbg("Cooling device current state: %ld, for cdev id %d",
+			    cnss_tcdev->curr_thermal_state, tcdev_id);
+		return 0;
+	}
+	mutex_unlock(&priv->tcdev_lock);
+	cnss_pr_dbg("Cooling device ID not found: %d", tcdev_id);
+	return -EINVAL;
+}
+EXPORT_SYMBOL(cnss_get_curr_therm_cdev_state);
+
 static int cnss_probe(struct platform_device *plat_dev)
 {
 	int ret = 0;
@@ -3571,6 +4109,16 @@ static int cnss_probe(struct platform_device *plat_dev)
 	INIT_LIST_HEAD(&plat_priv->vreg_list);
 	INIT_LIST_HEAD(&plat_priv->clk_list);
 
+#if defined(CONFIG_SEC_SS_CNSS_FEATURE_SYSFS) && defined(CONFIG_SEC_FACTORY)
+/* when subpcb-det-gpio = High, sub-PCB is not connected. else sub-PCB is connected.
+   To avoid CXSD sleep issue, return zero forcibly if sub-PCB is not connected.
+*/
+	if (cnss_get_subpcb_det_gpio_value(plat_priv)) {
+		pr_err("cnss: sub-pcb is not connected. return zero\n");
+		ret = 0;
+		goto reset_ctx;
+	}
+#endif
 	cnss_get_pm_domain_info(plat_priv);
 	cnss_get_wlaon_pwr_ctrl_info(plat_priv);
 	cnss_power_misc_params_init(plat_priv);
@@ -3639,6 +4187,9 @@ retry:
 
 	cnss_register_coex_service(plat_priv);
 	cnss_register_ims_service(plat_priv);
+
+	mutex_init(&plat_priv->tcdev_lock);
+	INIT_LIST_HEAD(&plat_priv->cnss_tcdev_list);
 
 	ret = cnss_genl_init();
 	if (ret < 0)

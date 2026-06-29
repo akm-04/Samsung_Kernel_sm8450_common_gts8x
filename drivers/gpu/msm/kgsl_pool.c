@@ -11,6 +11,8 @@
 #include <linux/of.h>
 #include <linux/scatterlist.h>
 
+#include <trace/hooks/mm.h>
+
 #include "kgsl_debugfs.h"
 #include "kgsl_device.h"
 #include "kgsl_pool.h"
@@ -36,6 +38,7 @@ static struct kmem_cache *addr_page_cache;
  * @pool_rbtree: RB tree with all pages held/reserved in this pool
  * @mempool: Mempool to pre-allocate tracking structs for pages in this pool
  * @debug_root: Pointer to the debugfs root for this pool
+ * @max_pages: Limit on number of pages this pool can hold
  */
 struct kgsl_page_pool {
 	unsigned int pool_order;
@@ -45,6 +48,7 @@ struct kgsl_page_pool {
 	struct rb_root pool_rbtree;
 	mempool_t *mempool;
 	struct dentry *debug_root;
+	unsigned int max_pages;
 };
 
 static void *_pool_entry_alloc(gfp_t gfp_mask, void *arg)
@@ -143,6 +147,7 @@ static void kgsl_destroy_page_pool(struct kgsl_page_pool *pool)
  * @list_lock: Spinlock for page list in the pool
  * @page_list: List of pages held/reserved in this pool
  * @debug_root: Pointer to the debugfs root for this pool
+ * @max_pages: Limit on number of pages this pool can hold
  */
 struct kgsl_page_pool {
 	unsigned int pool_order;
@@ -151,6 +156,7 @@ struct kgsl_page_pool {
 	spinlock_t list_lock;
 	struct list_head page_list;
 	struct dentry *debug_root;
+	unsigned int max_pages;
 };
 
 static int
@@ -551,7 +557,7 @@ void kgsl_pool_free_page(struct page *page)
 	if (!kgsl_pool_max_pages ||
 			(kgsl_pool_size_total() < kgsl_pool_max_pages)) {
 		pool = _kgsl_get_pool_from_order(page_order);
-		if (pool != NULL) {
+		if (pool != NULL  && (pool->page_count < pool->max_pages)) {
 			_kgsl_pool_add_page(pool, page);
 			return;
 		}
@@ -618,6 +624,8 @@ static void kgsl_pool_reserve_pages(struct kgsl_page_pool *pool,
 
 	of_property_read_u32(node, "qcom,mempool-reserved", &reserved);
 
+	reserved = min_t(u32, reserved, pool->max_pages);
+
 	/* Limit the total number of reserved pages to 4096 */
 	pool->reserved_pages = min_t(u32, reserved, 4096);
 
@@ -658,6 +666,9 @@ static int kgsl_of_parse_mempool(struct kgsl_page_pool *pool,
 
 	pool->pool_order = order;
 
+	if (of_property_read_u32(node, "qcom,mempool-max-pages", &pool->max_pages))
+		pool->max_pages = UINT_MAX;
+
 	spin_lock_init(&pool->list_lock);
 	kgsl_pool_list_init(pool);
 
@@ -667,6 +678,44 @@ static int kgsl_of_parse_mempool(struct kgsl_page_pool *pool,
 	kgsl_pool_init_debugfs(pool->debug_root, name, (void *) pool);
 
 	return 0;
+}
+
+static long try_get_kgsl_pool_size_kb(void)
+{
+	int i;
+	long total = 0;
+
+	for (i = 0; i < kgsl_num_pools; i++) {
+		struct kgsl_page_pool *kgsl_pool = &kgsl_pools[i];
+
+		if (!spin_trylock(&kgsl_pool->list_lock))
+			return -1;
+
+		total += kgsl_pool->page_count * (1 << kgsl_pool->pool_order);
+		spin_unlock(&kgsl_pool->list_lock);
+	}
+
+	return total * 4;
+}
+
+static void kgsl_pool_show_mem(void *data, unsigned int filter, nodemask_t *nodemask)
+{
+	long size_kb = try_get_kgsl_pool_size_kb();
+
+	if (size_kb < 0)
+		return;
+
+	pr_info("%s: %ld kB\n", "kgsl_pool", size_kb);
+}
+
+static void kgsl_pool_meminfo(void *data, struct seq_file *m)
+{
+	long size_kb = try_get_kgsl_pool_size_kb();
+
+	if (size_kb < 0)
+		return;
+
+	show_val_meminfo(m, "kgsl_pool", size_kb);
 }
 
 void kgsl_probe_page_pools(void)
@@ -699,11 +748,17 @@ void kgsl_probe_page_pools(void)
 
 	/* Initialize shrinker */
 	register_shrinker(&kgsl_pool_shrinker);
+
+	register_trace_android_vh_show_mem(kgsl_pool_show_mem, NULL);
+	register_trace_android_vh_meminfo_proc_show(kgsl_pool_meminfo, NULL);
 }
 
 void kgsl_exit_page_pools(void)
 {
 	int i;
+
+	unregister_trace_android_vh_show_mem(kgsl_pool_show_mem, NULL);
+	unregister_trace_android_vh_meminfo_proc_show(kgsl_pool_meminfo, NULL);
 
 	/* Release all pages in pools, if any.*/
 	kgsl_pool_reduce(INT_MAX, true);

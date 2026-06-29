@@ -470,8 +470,8 @@ static void device_link_release_fn(struct work_struct *work)
 	/* Ensure that all references to the link object have been dropped. */
 	device_link_synchronize_removal();
 
-	while (refcount_dec_not_one(&link->rpm_active))
-		pm_runtime_put(link->supplier);
+	pm_runtime_release_supplier(link);
+	pm_request_idle(link->supplier);
 
 	put_device(link->consumer);
 	put_device(link->supplier);
@@ -3132,6 +3132,8 @@ int device_add(struct device *dev)
 	int error = -EINVAL;
 	struct kobject *glue_dir = NULL;
 
+	int ret = 0;
+
 	dev = get_device(dev);
 	if (!dev)
 		goto done;
@@ -3226,7 +3228,9 @@ int device_add(struct device *dev)
 		blocking_notifier_call_chain(&dev->bus->p->bus_notifier,
 					     BUS_NOTIFY_ADD_DEVICE, dev);
 
-	kobject_uevent(&dev->kobj, KOBJ_ADD);
+	ret = kobject_uevent(&dev->kobj, KOBJ_ADD);
+	if (!strncmp(dev_name(dev), "remoteproc", strlen("remoteproc")))
+		pr_err("[%s] dev : %s add ret : %d\n", __func__, dev_name(dev), ret);
 
 	/*
 	 * Check if any of the other devices (consumers) have been waiting for

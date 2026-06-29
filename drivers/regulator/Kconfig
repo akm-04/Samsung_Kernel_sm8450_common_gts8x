@@ -32,7 +32,7 @@ config REGULATOR_DEBUG
 
 config REGULATOR_DEBUG_CONTROL
 	tristate "Regulator debug control support"
-	depends on DEBUG_FS
+	depends on DEBUG_FS || SEC_PM
 	help
 	  This driver supports debugfs based control of regulators for testing
 	  purposes.  It provides a mechanism to vote on the enable state,
@@ -1393,6 +1393,15 @@ config REGULATOR_QCOM_LABIBB
 	  based PMIC implementations. LAB can be used as positive
 	  boost regulator and IBB can be used as a negative boost regulator
 	  for LCD display panel.
+
+config REGULATOR_QTI_OCP_NOTIFIER
+	tristate "Qualcomm Technologies, Inc. Regulator OCP Notifier Driver"
+	help
+	  This driver provides support for logging and notifying consumers about
+	  regulator over-current (OCP) events on certain Qualcomm Technologies,
+	  Inc. PMIC devices.  This is useful for debugging as well as for
+	  providing a more graceful recovery mechanism than resetting the entire
+	  system.
 
 endif
 

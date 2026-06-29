@@ -70,6 +70,8 @@ static size_t record_print_text(struct printk_info *pinfo, char *r_text, size_t 
 	size_t line_len;
 	size_t len = 0;
 	char *next;
+	size_t remained_size = buf_size;
+	size_t to_be_moved_size;
 
 	prefix_len = info_print_prefix(pinfo, prefix, PREFIX_MAX);
 
@@ -93,7 +95,8 @@ static size_t record_print_text(struct printk_info *pinfo, char *r_text, size_t 
 		if ((len + prefix_len + text_len + 1 + 1) > buf_size)
 			break;
 
-		memmove(text + prefix_len, text, text_len);
+		to_be_moved_size = min((remained_size - prefix_len), text_len);
+		memmove(text + prefix_len, text, to_be_moved_size);
 		memcpy(text, prefix, prefix_len);
 
 		/*
@@ -131,6 +134,7 @@ static size_t record_print_text(struct printk_info *pinfo, char *r_text, size_t 
 		 */
 
 		text_len -= line_len + 1;
+		remained_size -= prefix_len + line_len + 1;
 	}
 
 	/*
@@ -213,12 +217,14 @@ static void copy_boot_log(void *unused, struct printk_ringbuffer *prb,
 	unsigned long begin, end;
 	enum desc_state state;
 	size_t rem_buf_sz;
+	struct printk_info pinfo;
 
 	tailid = descring.tail_id;
 	headid = descring.head_id;
 
 	if (!copy_early_boot_log) {
-		if (!r->info->text_len)
+		pinfo = __READ_ONCE(*r->info);
+		if (!pinfo.text_len)
 			return;
 
 		/*
@@ -226,15 +232,15 @@ static void copy_boot_log(void *unused, struct printk_ringbuffer *prb,
 		 * for record meta data size + newline + terminator
 		 * if not, let's reject the record.
 		 */
-		if ((off + r->info->text_len + PREFIX_MAX + 1 + 1) > boot_log_buf_size)
+		if ((off + pinfo.text_len + PREFIX_MAX + 1 + 1) > boot_log_buf_size)
 			return;
 
 		rem_buf_sz = boot_log_buf_size - off;
 		if (!rem_buf_sz)
 			return;
 
-		memcpy(&boot_log_buf[off], &r->text_buf[0], r->info->text_len);
-		off += record_print_text(r->info, &boot_log_buf[off], rem_buf_sz);
+		memcpy(&boot_log_buf[off], &r->text_buf[0], pinfo.text_len);
+		off += record_print_text(&pinfo, &boot_log_buf[off], rem_buf_sz);
 		return;
 	}
 
@@ -264,7 +270,8 @@ static void copy_boot_log(void *unused, struct printk_ringbuffer *prb,
 				begin = 0;
 
 			text_start = begin + sizeof(unsigned long);
-			textlen = p_infos[ind].text_len;
+			pinfo = __READ_ONCE(p_infos[ind]);
+			textlen = pinfo.text_len;
 			if (end - text_start < textlen)
 				textlen = end - text_start;
 
@@ -280,7 +287,7 @@ static void copy_boot_log(void *unused, struct printk_ringbuffer *prb,
 
 			memcpy(&boot_log_buf[off], &textdata_ring.data[text_start],
 					textlen);
-			off += record_print_text(&p_infos[ind],
+			off += record_print_text(&pinfo,
 					&boot_log_buf[off], rem_buf_sz);
 		}
 

@@ -60,6 +60,10 @@
 
 #include "internal.h"
 
+#ifdef CONFIG_PROC_FSLOG
+#include <linux/fslog.h>
+#endif
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
 
@@ -575,6 +579,10 @@ static unsigned long shrink_slab_memcg(gfp_t gfp_mask, int nid,
 	unsigned long ret, freed = 0;
 	int i;
 
+	/* allow shrink_slab_memcg for only kswapd */
+	if (!current_is_kswapd())
+		return 0;
+
 	if (!mem_cgroup_online(memcg))
 		return 0;
 
@@ -603,8 +611,10 @@ static unsigned long shrink_slab_memcg(gfp_t gfp_mask, int nid,
 
 		/* Call non-slab shrinkers even though kmem is disabled */
 		if (!memcg_kmem_enabled() &&
-		    !(shrinker->flags & SHRINKER_NONSLAB))
+		    !(shrinker->flags & SHRINKER_NONSLAB)) {
+			clear_bit(i, map->map);
 			continue;
+		}
 
 		ret = do_shrink_slab(&sc, shrinker, priority);
 		if (ret == SHRINK_EMPTY) {
@@ -670,7 +680,7 @@ static unsigned long shrink_slab_memcg(gfp_t gfp_mask, int nid,
  *
  * Returns the number of reclaimed slab objects.
  */
-static unsigned long shrink_slab(gfp_t gfp_mask, int nid,
+unsigned long shrink_slab(gfp_t gfp_mask, int nid,
 				 struct mem_cgroup *memcg,
 				 int priority)
 {
@@ -722,6 +732,7 @@ out:
 	cond_resched();
 	return freed;
 }
+EXPORT_SYMBOL_GPL(shrink_slab);
 
 void drop_slab_node(int nid)
 {
@@ -1019,17 +1030,34 @@ static enum page_references page_check_references(struct page *page,
 {
 	int referenced_ptes, referenced_page;
 	unsigned long vm_flags;
+	bool should_protect = false;
+	bool trylock_fail = false;
+	int ret = 0;
 
+	trace_android_vh_page_should_be_protected(page, &should_protect);
+	if (unlikely(should_protect))
+		return PAGEREF_ACTIVATE;
+
+	trace_android_vh_page_trylock_set(page);
+	trace_android_vh_check_page_look_around_ref(page, &ret);
+	if (ret)
+		return ret;
 	referenced_ptes = page_referenced(page, 1, sc->target_mem_cgroup,
 					  &vm_flags);
 	referenced_page = TestClearPageReferenced(page);
-
+	trace_android_vh_page_trylock_get_result(page, &trylock_fail);
+	if (trylock_fail)
+		return PAGEREF_KEEP;
 	/*
 	 * Mlock lost the isolation race with us.  Let try_to_unmap()
 	 * move the page to the unevictable list.
 	 */
 	if (vm_flags & VM_LOCKED)
 		return PAGEREF_RECLAIM;
+
+	/* rmap lock contention: rotate */
+	if (referenced_ptes == -1)
+		return PAGEREF_KEEP;
 
 	if (referenced_ptes) {
 		/*
@@ -1141,6 +1169,11 @@ static unsigned int shrink_page_list(struct list_head *page_list,
 
 		if (!sc->may_unmap && page_mapped(page))
 			goto keep_locked;
+
+#ifdef CONFIG_HUGEPAGE_POOL
+		if (PageTransHuge(page))
+			goto keep_locked;
+#endif
 
 		may_enter_fs = (sc->gfp_mask & __GFP_FS) ||
 			(PageSwapCache(page) && (sc->gfp_mask & __GFP_IO));
@@ -1290,6 +1323,9 @@ static unsigned int shrink_page_list(struct list_head *page_list,
 				if (!add_to_swap(page)) {
 					if (!PageTransHuge(page))
 						goto activate_locked_split;
+#ifdef CONFIG_HUGEPAGE_POOL_DEBUG
+					BUG();
+#endif
 					/* Fallback to swap normal pages */
 					if (split_huge_page_to_list(page,
 								    page_list))
@@ -1335,6 +1371,7 @@ static unsigned int shrink_page_list(struct list_head *page_list,
 			if (unlikely(PageTransHuge(page)))
 				flags |= TTU_SPLIT_HUGE_PMD;
 
+			trace_android_vh_page_trylock_set(page);
 			if (!try_to_unmap(page, flags)) {
 				stat->nr_unmap_fail += nr_pages;
 				if (!was_swapbacked && PageSwapBacked(page))
@@ -1445,6 +1482,7 @@ static unsigned int shrink_page_list(struct list_head *page_list,
 					 * increment nr_reclaimed here (and
 					 * leave it off the LRU).
 					 */
+					trace_android_vh_page_trylock_clear(page);
 					nr_reclaimed++;
 					continue;
 				}
@@ -1478,6 +1516,7 @@ free_it:
 		 * Is there need to periodically free_page_list? It would
 		 * appear not as the counts should be low
 		 */
+		trace_android_vh_page_trylock_clear(page);
 		if (unlikely(PageTransHuge(page)))
 			destroy_compound_page(page);
 		else
@@ -1560,36 +1599,6 @@ unsigned int reclaim_clean_pages_from_list(struct zone *zone,
 			    stat.nr_lazyfree_fail);
 	mod_node_page_state(zone->zone_pgdat, NR_ISOLATED_FILE,
 			    -(long)stat.nr_lazyfree_fail);
-	return nr_reclaimed;
-}
-
-int reclaim_pages_from_list(struct list_head *page_list)
-{
-	struct scan_control sc = {
-		.gfp_mask = GFP_KERNEL,
-		.priority = DEF_PRIORITY,
-		.may_writepage = 1,
-		.may_unmap = 1,
-		.may_swap = 1,
-	};
-	unsigned long nr_reclaimed;
-	struct reclaim_stat dummy_stat;
-	struct page *page;
-
-	list_for_each_entry(page, page_list, lru)
-		ClearPageActive(page);
-
-	nr_reclaimed = shrink_page_list(page_list, NULL, &sc,
-				&dummy_stat, false);
-	while (!list_empty(page_list)) {
-
-		page = lru_to_page(page_list);
-		list_del(&page->lru);
-		dec_node_page_state(page, NR_ISOLATED_ANON +
-				page_is_file_lru(page));
-		putback_lru_page(page);
-	}
-
 	return nr_reclaimed;
 }
 
@@ -1734,8 +1743,12 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 
 		nr_pages = compound_nr(page);
 		total_scan += nr_pages;
-
+#ifdef CONFIG_HUGEPAGE_POOL
+		if (page_zonenum(page) > sc->reclaim_idx
+		    || PageTransHuge(page)) {
+#else
 		if (page_zonenum(page) > sc->reclaim_idx) {
+#endif
 			list_move(&page->lru, &pages_skipped);
 			nr_skipped[page_zonenum(page)] += nr_pages;
 			continue;
@@ -1756,6 +1769,7 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 		case 0:
 			nr_taken += nr_pages;
 			nr_zone_taken[page_zonenum(page)] += nr_pages;
+			trace_android_vh_del_page_from_lrulist(page, false, lru);
 			list_move(&page->lru, dst);
 			break;
 
@@ -1930,6 +1944,7 @@ static unsigned noinline_for_stack move_pages_to_lru(struct lruvec *lruvec,
 		nr_pages = thp_nr_pages(page);
 		update_lru_size(lruvec, lru, page_zonenum(page), nr_pages);
 		list_move(&page->lru, &lruvec->lists[lru]);
+		trace_android_vh_add_page_to_lrulist(page, false, lru);
 
 		if (put_page_testzero(page)) {
 			__ClearPageLRU(page);
@@ -2021,6 +2036,7 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
 		return 0;
 
 	nr_reclaimed = shrink_page_list(&page_list, pgdat, sc, &stat, false);
+	trace_android_vh_handle_failed_page_trylock(&page_list);
 
 	spin_lock_irq(&pgdat->lru_lock);
 
@@ -2033,7 +2049,6 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
 		__count_vm_events(item, nr_reclaimed);
 	__count_memcg_events(lruvec_memcg(lruvec), item, nr_reclaimed);
 	__count_vm_events(PGSTEAL_ANON + file, nr_reclaimed);
-
 	spin_unlock_irq(&pgdat->lru_lock);
 
 	mem_cgroup_uncharge_list(&page_list);
@@ -2084,6 +2099,7 @@ static void shrink_active_list(unsigned long nr_to_scan,
 	int file = is_file_lru(lru);
 	struct pglist_data *pgdat = lruvec_pgdat(lruvec);
 	bool bypass = false;
+	bool should_protect = false;
 
 	lru_add_drain();
 
@@ -2118,12 +2134,20 @@ static void shrink_active_list(unsigned long nr_to_scan,
 			}
 		}
 
+		trace_android_vh_page_should_be_protected(page, &should_protect);
+		if (unlikely(should_protect)) {
+			nr_rotated += thp_nr_pages(page);
+			list_add(&page->lru, &l_active);
+			continue;
+		}
+
 		trace_android_vh_page_referenced_check_bypass(page, nr_to_scan, lru, &bypass);
 		if (bypass)
 			goto skip_page_referenced;
-
+		trace_android_vh_page_trylock_set(page);
+		/* Referenced or rmap lock contention: rotate */
 		if (page_referenced(page, 0, sc->target_mem_cgroup,
-				    &vm_flags)) {
+				     &vm_flags) != 0) {
 			/*
 			 * Identify referenced, file-backed active pages and
 			 * give them one more trip around the active list. So
@@ -2134,11 +2158,13 @@ static void shrink_active_list(unsigned long nr_to_scan,
 			 * so we ignore them here.
 			 */
 			if ((vm_flags & VM_EXEC) && page_is_file_lru(page)) {
+				trace_android_vh_page_trylock_clear(page);
 				nr_rotated += thp_nr_pages(page);
 				list_add(&page->lru, &l_active);
 				continue;
 			}
 		}
+		trace_android_vh_page_trylock_clear(page);
 skip_page_referenced:
 		ClearPageActive(page);	/* we are de-activating */
 		SetPageWorkingset(page);
@@ -2220,6 +2246,7 @@ unsigned long reclaim_pages(struct list_head *page_list)
 
 	return nr_reclaimed;
 }
+EXPORT_SYMBOL_GPL(reclaim_pages);
 
 static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
 				 struct lruvec *lruvec, struct scan_control *sc)
@@ -2269,11 +2296,16 @@ static bool inactive_is_low(struct lruvec *lruvec, enum lru_list inactive_lru)
 	unsigned long inactive, active;
 	unsigned long inactive_ratio;
 	unsigned long gb;
+	bool skip = false;
 
 	inactive = lruvec_page_state(lruvec, NR_LRU_BASE + inactive_lru);
 	active = lruvec_page_state(lruvec, NR_LRU_BASE + active_lru);
 
 	gb = (inactive + active) >> (30 - PAGE_SHIFT);
+	trace_android_vh_inactive_is_low(gb, &inactive_ratio, inactive_lru, &skip);
+	if (skip)
+		goto out;
+
 	if (gb)
 		inactive_ratio = int_sqrt(10 * gb);
 	else
@@ -2281,6 +2313,7 @@ static bool inactive_is_low(struct lruvec *lruvec, enum lru_list inactive_lru)
 
 	trace_android_vh_tune_inactive_ratio(&inactive_ratio, is_file_lru(inactive_lru));
 
+out:
 	return inactive * inactive_ratio < active;
 }
 
@@ -2291,6 +2324,250 @@ enum scan_balance {
 	SCAN_FILE,
 };
 
+/* mem_boost throttles only kswapd's behavior */
+enum mem_boost {
+	NO_BOOST,
+	BOOST_MID = 1,
+	BOOST_HIGH = 2,
+	BOOST_KILL = 3,
+};
+
+enum kswapd_mode {
+	KSWAPD_DEFAULT,
+	KSWAPD_SUPPRESSED,
+	KSWAPD_AGGRESSIVE,
+	KSWAPD_MODE_END
+};
+
+static int mem_boost_mode = NO_BOOST;
+static unsigned long last_mode_change;
+bool am_app_launch;
+static int mem_boost_mode_kswapd = KSWAPD_DEFAULT;
+
+#define MEM_BOOST_MAX_TIME (5 * HZ) /* 5 sec */
+
+#ifdef CONFIG_SYSFS
+#define MB_TO_PAGES(x) ((x) << (20 - PAGE_SHIFT))
+#define GB_TO_PAGES(x) ((x) << (30 - PAGE_SHIFT))
+static unsigned long low_threshold;
+
+static inline bool is_too_low_file(void)
+{
+	unsigned long pgdatfile;
+
+	if (!low_threshold) {
+		if (totalram_pages() > GB_TO_PAGES(4))
+			low_threshold = MB_TO_PAGES(500);
+		else if (totalram_pages() > GB_TO_PAGES(3))
+			low_threshold = MB_TO_PAGES(400);
+		else if (totalram_pages() > GB_TO_PAGES(2))
+			low_threshold = MB_TO_PAGES(300);
+		else
+			low_threshold = MB_TO_PAGES(200);
+	}
+
+	pgdatfile = global_node_page_state(NR_ACTIVE_FILE) +
+		    global_node_page_state(NR_INACTIVE_FILE);
+	return pgdatfile < low_threshold;
+}
+
+#ifdef CONFIG_KSWAPD_CPU
+static int set_kswapd_cpu_affinity_as_config(void);
+static int set_kswapd_cpu_affinity_as_boost(void);
+#endif
+
+inline bool need_memory_boosting(void)
+{
+	if (mem_boost_mode != NO_BOOST &&
+	    time_after(jiffies, last_mode_change + MEM_BOOST_MAX_TIME)) {
+		mem_boost_mode = NO_BOOST;
+#ifdef CONFIG_KSWAPD_CPU
+		set_kswapd_cpu_affinity_as_config();
+#endif
+	}
+	if (mem_boost_mode >= BOOST_HIGH)
+		return true;
+	else
+		return false;
+}
+
+static ssize_t mem_boost_mode_show(struct kobject *kobj,
+				    struct kobj_attribute *attr, char *buf)
+{
+	if (mem_boost_mode != NO_BOOST &&
+	    time_after(jiffies, last_mode_change + MEM_BOOST_MAX_TIME)) {
+		mem_boost_mode = NO_BOOST;
+#ifdef CONFIG_KSWAPD_CPU
+		set_kswapd_cpu_affinity_as_config();
+#endif
+	}
+	return sprintf(buf, "%d\n", mem_boost_mode);
+}
+
+static ssize_t mem_boost_mode_store(struct kobject *kobj,
+				     struct kobj_attribute *attr,
+				     const char *buf, size_t count)
+{
+	int mode;
+	int err;
+
+	err = kstrtoint(buf, 10, &mode);
+	if (err || mode > BOOST_KILL || mode < NO_BOOST)
+		return -EINVAL;
+
+	mem_boost_mode = mode;
+	last_mode_change = jiffies;
+#ifdef CONFIG_RBIN
+	if (mem_boost_mode >= BOOST_HIGH)
+		rbin_oem_func(WAKE_RBIN_PRERECLAIM, NULL);
+#endif
+#ifdef CONFIG_KSWAPD_CPU
+	if (mem_boost_mode >= BOOST_HIGH)
+		set_kswapd_cpu_affinity_as_boost();
+	else if (mem_boost_mode == NO_BOOST)
+		set_kswapd_cpu_affinity_as_config();
+#endif
+	return count;
+}
+
+static ssize_t mem_boost_mode_system_show(struct kobject *kobj,
+				    struct kobj_attribute *attr, char *buf)
+{
+	return mem_boost_mode_show(kobj, attr, buf);
+}
+
+static ssize_t mem_boost_mode_system_store(struct kobject *kobj,
+				     struct kobj_attribute *attr,
+				     const char *buf, size_t count)
+{
+	return mem_boost_mode_store(kobj, attr, buf, count);
+}
+
+ATOMIC_NOTIFIER_HEAD(am_app_launch_notifier);
+
+int am_app_launch_notifier_register(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_register(&am_app_launch_notifier, nb);
+}
+
+int am_app_launch_notifier_unregister(struct notifier_block *nb)
+{
+	return  atomic_notifier_chain_unregister(&am_app_launch_notifier, nb);
+}
+
+static ssize_t am_app_launch_show(struct kobject *kobj,
+				  struct kobj_attribute *attr, char *buf)
+{
+	int ret;
+
+	ret = am_app_launch ? 1 : 0;
+	return sprintf(buf, "%d\n", ret);
+}
+
+static int notify_app_launch_started(void)
+{
+	trace_printk("%s\n", "am_app_launch started");
+	atomic_notifier_call_chain(&am_app_launch_notifier, 1, NULL);
+#if IS_ENABLED(CONFIG_ZRAM)
+	if (zram_oem_fn)
+		zram_oem_fn(ZRAM_APP_LAUNCH_NOTIFY, NULL, 1);
+#endif
+	return 0;
+}
+
+static int notify_app_launch_finished(void)
+{
+	trace_printk("%s\n", "am_app_launch finished");
+	atomic_notifier_call_chain(&am_app_launch_notifier, 0, NULL);
+#if IS_ENABLED(CONFIG_ZRAM)
+	if (zram_oem_fn)
+		zram_oem_fn(ZRAM_APP_LAUNCH_NOTIFY, NULL, 0);
+#endif
+	return 0;
+}
+
+static ssize_t am_app_launch_store(struct kobject *kobj,
+				   struct kobj_attribute *attr,
+				   const char *buf, size_t count)
+{
+	int mode;
+	int err;
+	bool am_app_launch_new;
+
+	err = kstrtoint(buf, 10, &mode);
+	if (err || (mode != 0 && mode != 1))
+		return -EINVAL;
+
+	am_app_launch_new = mode ? true : false;
+	trace_printk("am_app_launch %d -> %d\n", am_app_launch,
+		     am_app_launch_new);
+	if (am_app_launch != am_app_launch_new) {
+		if (am_app_launch_new)
+			notify_app_launch_started();
+		else
+			notify_app_launch_finished();
+	}
+	am_app_launch = am_app_launch_new;
+
+	return count;
+}
+
+static ssize_t mem_boost_mode_kswapd_show(struct kobject *kobj,
+				  struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", mem_boost_mode_kswapd);
+}
+
+static ssize_t mem_boost_mode_kswapd_store(struct kobject *kobj,
+				   struct kobj_attribute *attr,
+				   const char *buf, size_t count)
+{
+	int mode;
+	int err;
+
+	err = kstrtoint(buf, 10, &mode);
+	if (err || mode < KSWAPD_DEFAULT || mode >= KSWAPD_MODE_END)
+		return -EINVAL;
+
+	RECLAIMER_LOG("UMR: switch kswapd_mode: %d -> %d", mem_boost_mode_kswapd, mode);
+	mem_boost_mode_kswapd = mode;
+
+	return count;
+}
+
+bool is_kswapd_suppressed(void)
+{
+	return mem_boost_mode_kswapd == KSWAPD_SUPPRESSED;
+}
+EXPORT_SYMBOL(is_kswapd_suppressed);
+
+bool is_kswapd_aggressive(void)
+{
+	return mem_boost_mode_kswapd == KSWAPD_AGGRESSIVE;
+}
+
+#define VMSCAN_ATTR(_name) \
+	static struct kobj_attribute _name##_attr = \
+		__ATTR(_name, 0644, _name##_show, _name##_store)
+VMSCAN_ATTR(mem_boost_mode);
+VMSCAN_ATTR(mem_boost_mode_system);
+VMSCAN_ATTR(am_app_launch);
+VMSCAN_ATTR(mem_boost_mode_kswapd);
+
+static struct attribute *vmscan_attrs[] = {
+	&mem_boost_mode_attr.attr,
+	&mem_boost_mode_system_attr.attr,
+	&am_app_launch_attr.attr,
+	&mem_boost_mode_kswapd_attr.attr,
+	NULL,
+};
+
+static struct attribute_group vmscan_attr_group = {
+	.attrs = vmscan_attrs,
+	.name = "vmscan",
+};
+#endif
+
 /*
  * Determine how aggressively the anon and file LRU lists should be
  * scanned.  The relative value of each set of LRU lists is determined
@@ -2300,6 +2577,7 @@ enum scan_balance {
  * nr[0] = anon inactive pages to scan; nr[1] = anon active pages to scan
  * nr[2] = file inactive pages to scan; nr[3] = file active pages to scan
  */
+#define DYNAMIC_SWAPPINESS_DELTA 30
 static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 			   unsigned long *nr)
 {
@@ -2350,6 +2628,20 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 		goto out;
 	}
 
+	if (current_is_kswapd() && need_memory_boosting() &&
+	    !is_too_low_file()) {
+		scan_balance = SCAN_FILE;
+		goto out;
+	}
+
+	if (current_is_kswapd() && is_kswapd_suppressed()) {
+		swappiness -= DYNAMIC_SWAPPINESS_DELTA;
+	}
+
+	if (current_is_kswapd() && is_kswapd_aggressive()) {
+		swappiness += DYNAMIC_SWAPPINESS_DELTA;
+	}
+
 	trace_android_rvh_set_balance_anon_file_reclaim(&balance_anon_file_reclaim);
 
 	/*
@@ -2358,7 +2650,8 @@ static void get_scan_count(struct lruvec *lruvec, struct scan_control *sc,
 	 * anon and page cache files for reclaim, allow swapping of anon pages
 	 * even if there are a number of inactive file cache pages.
 	 */
-	if (!balance_anon_file_reclaim && sc->cache_trim_mode) {
+	if (!balance_anon_file_reclaim && sc->cache_trim_mode &&
+	    !IS_ENABLED(CONFIG_BALANCE_ANON_FILE_RECLAIM)) {
 		scan_balance = SCAN_FILE;
 		goto out;
 	}
@@ -2608,6 +2901,13 @@ static void shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
 	blk_finish_plug(&plug);
 	sc->nr_reclaimed += nr_reclaimed;
 
+	if (need_memory_boosting())
+		return;
+
+	if (is_kswapd_suppressed()) {
+		return;
+	}
+
 	/*
 	 * Even if we did not try to evict anon pages at all, we want to
 	 * rebalance the anon lru active/inactive ratio.
@@ -2698,6 +2998,7 @@ static void shrink_node_memcgs(pg_data_t *pgdat, struct scan_control *sc)
 		struct lruvec *lruvec = mem_cgroup_lruvec(memcg, pgdat);
 		unsigned long reclaimed;
 		unsigned long scanned;
+		bool skip = false;
 
 		/*
 		 * This loop can become CPU-bound when target memcgs
@@ -2706,6 +3007,10 @@ static void shrink_node_memcgs(pg_data_t *pgdat, struct scan_control *sc)
 		 * memory is explicitly protected. Avoid soft lockups.
 		 */
 		cond_resched();
+
+		trace_android_vh_shrink_node_memcgs(memcg, &skip);
+		if (skip)
+			continue;
 
 		mem_cgroup_calculate_protection(target_memcg, memcg);
 
@@ -3072,6 +3377,7 @@ static void snapshot_refaults(struct mem_cgroup *target_memcg, pg_data_t *pgdat)
 	target_lruvec->refaults[0] = refaults;
 	refaults = lruvec_page_state(target_lruvec, WORKINGSET_ACTIVATE_FILE);
 	target_lruvec->refaults[1] = refaults;
+	trace_android_vh_snapshot_refaults(target_lruvec);
 }
 
 /*
@@ -3324,7 +3630,11 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 		.priority = DEF_PRIORITY,
 		.may_writepage = !laptop_mode,
 		.may_unmap = 1,
+#ifdef CONFIG_DIRECT_RECLAIM_FILE_PAGES_ONLY
+		.may_swap = 0,
+#else
 		.may_swap = 1,
+#endif
 	};
 
 	/*
@@ -3345,9 +3655,11 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 
 	set_task_reclaim_state(current, &sc.reclaim_state);
 	trace_mm_vmscan_direct_reclaim_begin(order, sc.gfp_mask);
+	RECLAIMER_LOG("UMR: B|d.reclaim");
 
 	nr_reclaimed = do_try_to_free_pages(zonelist, &sc);
 
+	RECLAIMER_LOG("UMR: E|d.reclaim %lu KB", nr_reclaimed << (PAGE_SHIFT - 10));
 	trace_mm_vmscan_direct_reclaim_end(nr_reclaimed);
 	set_task_reclaim_state(current, NULL);
 
@@ -3637,6 +3949,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int highest_zoneidx)
 		.may_unmap = 1,
 	};
 
+	RECLAIMER_LOG("UMR: B|kswapd");
 	set_task_reclaim_state(current, &sc.reclaim_state);
 	psi_memstall_enter(&pflags);
 	__fs_reclaim_acquire();
@@ -3793,6 +4106,8 @@ restart:
 		pgdat->kswapd_failures++;
 
 out:
+	RECLAIMER_LOG("UMR: E|kswapd %lu KB", sc.nr_reclaimed << (PAGE_SHIFT - 10));
+
 	/* If reclaim was boosted, account for the reclaim done in this pass */
 	if (boosted) {
 		unsigned long flags;
@@ -3928,6 +4243,65 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int alloc_order, int reclaim_o
 	finish_wait(&pgdat->kswapd_wait, &wait);
 }
 
+#if CONFIG_KSWAPD_CPU
+static struct cpumask kswapd_cpumask;
+
+#define KSWAPD_CPU_BIG	0xF0
+static struct cpumask kswapd_cpumask_boost;
+
+static void init_kswapd_cpumask(void)
+{
+	int i;
+
+	cpumask_clear(&kswapd_cpumask);
+	for (i = 0; i < nr_cpu_ids; i++) {
+		if (CONFIG_KSWAPD_CPU & (1 << i))
+			cpumask_set_cpu(i, &kswapd_cpumask);
+	}
+
+	cpumask_clear(&kswapd_cpumask_boost);
+	for (i = 0; i < nr_cpu_ids; i++) {
+		if (KSWAPD_CPU_BIG & (1 << i))
+			cpumask_set_cpu(i, &kswapd_cpumask_boost);
+	}
+}
+
+/* follow like kswapd_cpu_online(unsigned int cpu) */
+static int set_kswapd_cpu_affinity_as_config(void)
+{
+	int nid;
+
+	for_each_node_state(nid, N_MEMORY) {
+		pg_data_t *pgdat = NODE_DATA(nid);
+		const struct cpumask *mask;
+
+		mask = &kswapd_cpumask;
+
+		if (cpumask_any_and(cpu_online_mask, mask) < nr_cpu_ids)
+			/* One of our CPUs online: restore mask */
+			set_cpus_allowed_ptr(pgdat->kswapd, mask);
+	}
+	return 0;
+}
+
+static int set_kswapd_cpu_affinity_as_boost(void)
+{
+	int nid;
+
+	for_each_node_state(nid, N_MEMORY) {
+		pg_data_t *pgdat = NODE_DATA(nid);
+		const struct cpumask *mask;
+
+		mask = &kswapd_cpumask_boost;
+
+		if (cpumask_any_and(cpu_online_mask, mask) < nr_cpu_ids)
+			/* One of our CPUs online: restore mask */
+			set_cpus_allowed_ptr(pgdat->kswapd, mask);
+	}
+	return 0;
+}
+#endif
+
 /*
  * The background pageout daemon, started as a kernel thread
  * from the init process.
@@ -3947,7 +4321,11 @@ static int kswapd(void *p)
 	unsigned int highest_zoneidx = MAX_NR_ZONES - 1;
 	pg_data_t *pgdat = (pg_data_t*)p;
 	struct task_struct *tsk = current;
+#if CONFIG_KSWAPD_CPU
+	const struct cpumask *cpumask = &kswapd_cpumask;
+#else
 	const struct cpumask *cpumask = cpumask_of_node(pgdat->node_id);
+#endif
 
 	if (!cpumask_empty(cpumask))
 		set_cpus_allowed_ptr(tsk, cpumask);
@@ -4199,9 +4577,18 @@ static int __init kswapd_init(void)
 {
 	int nid;
 
+#if CONFIG_KSWAPD_CPU
+	init_kswapd_cpumask();
+#endif
+
 	swap_setup();
 	for_each_node_state(nid, N_MEMORY)
  		kswapd_run(nid);
+
+#ifdef CONFIG_SYSFS
+	if (sysfs_create_group(mm_kobj, &vmscan_attr_group))
+		pr_err("vmscan: register sysfs failed\n");
+#endif
 	return 0;
 }
 

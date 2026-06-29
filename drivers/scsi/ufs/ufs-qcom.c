@@ -23,6 +23,7 @@
 #include <linux/debugfs.h>
 #include <trace/hooks/ufshcd.h>
 #include <linux/ipc_logging.h>
+#include <linux/nvmem-consumer.h>
 
 #include "ufshcd.h"
 #include "ufshcd-pltfrm.h"
@@ -32,6 +33,10 @@
 #include "ufs_quirks.h"
 #include "ufshcd-crypto-qti.h"
 #include <trace/hooks/ufshcd.h>
+
+#if IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
+#include "ufs-sec-feature.h"
+#endif
 
 #define UFS_QCOM_DEFAULT_DBG_PRINT_EN	\
 	(UFS_QCOM_DBG_PRINT_REGS_EN | UFS_QCOM_DBG_PRINT_TEST_BUS_EN)
@@ -56,6 +61,9 @@
 			ipc_log_string(host->ufs_ipc_log_ctx,	\
 					",%d,"fmt, current->cpu, ##__VA_ARGS__);\
 	} while (0)
+
+#define UFS_BOOT_DEVICE  0x1
+static u32 is_bootdevice_ufs = UFS_BOOT_DEVICE;
 
 static char android_boot_dev[ANDROID_BOOT_DEV_MAX];
 
@@ -483,6 +491,11 @@ static int ufs_qcom_host_reset(struct ufs_hba *hba)
 
 	host->reset_in_progress = true;
 
+#if IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
+	/* check device_stuck info and call panic before host reset */
+	ufs_sec_check_device_stuck();
+#endif
+
 	if (!host->core_reset) {
 		dev_warn(hba->dev, "%s: reset control not set\n", __func__);
 		goto out;
@@ -578,12 +591,6 @@ static int ufs_qcom_power_up_sequence(struct ufs_hba *hba)
 	enum phy_mode mode = (host->limit_rate == PA_HS_MODE_B) ?
 					PHY_MODE_UFS_HS_B : PHY_MODE_UFS_HS_A;
 	int submode = host->limit_phy_submode;
-
-	/* Reset UFS Host Controller and PHY */
-	ret = ufs_qcom_host_reset(hba);
-	if (ret)
-		dev_warn(hba->dev, "%s: host reset returned %d\n",
-				  __func__, ret);
 
 	if (host->hw_ver.major < 0x4)
 		submode = UFS_QCOM_PHY_SUBMODE_NON_G4;
@@ -1467,6 +1474,20 @@ static int ufs_qcom_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
 	int err;
 
+#if IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
+	/*
+	 * Change WB state to WB_OFF to default in resume sequence.
+	 * In system PM, the link is "link off state" or "hibern8".
+	 * In case of link off state,
+	 *  just reset the WB state because UFS device needs to setup link.
+	 * In Hibern8 state,
+	 *  wb_off reset and WB off are required.
+	 */
+	if (ufshcd_is_system_pm(pm_op)) {
+		ufs_sec_wb_force_off(hba);
+	}
+#endif
+
 	if (host->vddp_ref_clk && (hba->rpm_lvl > UFS_PM_LVL_3 ||
 				   hba->spm_lvl > UFS_PM_LVL_3))
 		ufs_qcom_enable_vreg(hba->dev,
@@ -1483,13 +1504,15 @@ static int ufs_qcom_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 			pm_op, hba->rpm_lvl, hba->spm_lvl, hba->uic_link_state,
 			hba->curr_dev_pwr_mode, err);
 
-	/* Refer ufs_qcom_cpufreq_dwork() */
-	mutex_lock(&host->cpufreq_lock);
-	host->active = true;
-	/* Reschedule the work if it exited when the clocks were scaled up */
-	if (!!atomic_read(&host->scale_up))
-		queue_delayed_work(host->fworkq, &host->fwork, 0);
-	mutex_unlock(&host->cpufreq_lock);
+	if (!host->cpufreq_dis) {
+		/* Refer ufs_qcom_cpufreq_dwork() */
+		mutex_lock(&host->cpufreq_lock);
+		host->active = true;
+		/* Reschedule the work if it exited when the clocks were scaled up */
+		if (!!atomic_read(&host->scale_up))
+			queue_delayed_work(host->fworkq, &host->fwork, 0);
+		mutex_unlock(&host->cpufreq_lock);
+	}
 
 	return 0;
 }
@@ -1876,8 +1899,11 @@ static void ufs_qcom_dev_ref_clk_ctrl(struct ufs_qcom_host *host, bool enable)
 
 		writel_relaxed(temp, host->dev_ref_clk_ctrl_mmio);
 
-		/* ensure that ref_clk is enabled/disabled before we return */
-		wmb();
+		/*
+		 * Make sure the write to ref_clk reaches the destination and
+		 * not stored in a Write Buffer (WB).
+		 */
+		readl(host->dev_ref_clk_ctrl_mmio);
 
 		/*
 		 * If we call hibern8 exit after this, we need to make sure that
@@ -2001,6 +2027,8 @@ static int ufs_qcom_pwr_change_notify(struct ufs_hba *hba,
 		if (ufshcd_is_hs_mode(&hba->pwr_info) &&
 			!ufshcd_is_hs_mode(dev_req_params))
 			ufs_qcom_dev_ref_clk_ctrl(host, false);
+
+		host->skip_flush = false;
 		break;
 	default:
 		ret = -EINVAL;
@@ -2185,8 +2213,8 @@ static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 	spin_lock_irqsave(hba->host->host_lock, flags);
 	/* Set the rpm auto suspend delay to 3s */
 	hba->host->hostt->rpm_autosuspend_delay = UFS_QCOM_AUTO_SUSPEND_DELAY;
-	/* Set the default auto-hiberate idle timer value to 5ms */
-	hba->ahit = FIELD_PREP(UFSHCI_AHIBERN8_TIMER_MASK, 5) |
+	/* Set the default auto-hiberate idle timer value to 2ms */
+	hba->ahit = FIELD_PREP(UFSHCI_AHIBERN8_TIMER_MASK, 2) |
 		    FIELD_PREP(UFSHCI_AHIBERN8_SCALE_MASK, 3);
 	/* Set the clock gating delay to performance mode */
 	hba->clk_gating.delay_ms = UFS_QCOM_CLK_GATING_DELAY_MS_PERF;
@@ -2205,6 +2233,19 @@ static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 
 	if (hba->dev_info.wmanufacturerid == UFS_VENDOR_MICRON)
 		hba->dev_quirks |= UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM;
+
+#if IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
+	/* check only at the first init */
+	if (!(hba->eh_flags || hba->pm_op_in_progress)) {
+		/* sec special features */
+		ufs_set_sec_features(hba);
+
+#if IS_ENABLED(CONFIG_SCSI_UFS_TEST_MODE)
+		dev_info(hba->dev, "UFS test mode enabled\n");
+#endif
+	}
+	ufs_sec_feature_config(hba);
+#endif
 
 	return err;
 }
@@ -2270,7 +2311,9 @@ static void ufs_qcom_set_caps(struct ufs_hba *hba)
 		UFSHCD_CAP_HIBERN8_WITH_CLK_GATING |
 		UFSHCD_CAP_CLK_SCALING | UFSHCD_CAP_AUTO_BKOPS_SUSPEND |
 		UFSHCD_CAP_RPM_AUTOSUSPEND;
+#if !IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
 		hba->caps |= UFSHCD_CAP_WB_EN;
+#endif
 		hba->caps |= UFSHCD_CAP_AGGR_POWER_COLLAPSE;
 	}
 
@@ -2633,37 +2676,6 @@ ufs_qcom_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 					ioctl_data->idn, index, 0, &att);
 		break;
 
-	case UPIU_QUERY_OPCODE_WRITE_ATTR:
-		err = copy_from_user(&att,
-				     buffer +
-				     sizeof(struct ufs_ioctl_query_data),
-				     sizeof(u32));
-		if (err) {
-			dev_err(hba->dev,
-				"%s: Failed copying buffer from user, err %d\n",
-				__func__, err);
-			goto out_release_mem;
-		}
-
-		switch (ioctl_data->idn) {
-		case QUERY_ATTR_IDN_BOOT_LU_EN:
-			index = 0;
-			if (!att) {
-				dev_err(hba->dev,
-					"%s: Illegal ufs query ioctl data, opcode 0x%x, idn 0x%x, att 0x%x\n",
-					__func__, ioctl_data->opcode,
-					(unsigned int)ioctl_data->idn, att);
-				err = -EINVAL;
-				goto out_release_mem;
-			}
-			break;
-		default:
-			goto out_einval;
-		}
-		err = ufshcd_query_attr(hba, ioctl_data->opcode,
-					ioctl_data->idn, index, 0, &att);
-		break;
-
 	case UPIU_QUERY_OPCODE_READ_FLAG:
 		switch (ioctl_data->idn) {
 		case QUERY_FLAG_IDN_FDEVICEINIT:
@@ -2709,8 +2721,6 @@ ufs_qcom_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 		ioctl_data->buf_size = 1;
 		data_ptr = &flag;
 		break;
-	case UPIU_QUERY_OPCODE_WRITE_ATTR:
-		goto out_release_mem;
 	default:
 		goto out_einval;
 	}
@@ -3096,8 +3106,8 @@ static int ufs_qcom_set_cur_therm_state(struct thermal_cooling_device *tcd,
 	switch (data) {
 	case UFS_QCOM_LVL_NO_THERM:
 		dev_warn(tcd->devdata, "UFS host thermal mitigation stops\n");
-		/* Set the default auto-hiberate idle timer to 5 ms */
-		ufshcd_auto_hibern8_update(hba, ufs_qcom_us_to_ahit(5000));
+		/* Set the default auto-hiberate idle timer to 2 ms */
+		ufshcd_auto_hibern8_update(hba, ufs_qcom_us_to_ahit(2000));
 
 		/* Set the default auto suspend delay to 3000 ms */
 		shost_for_each_device(sdev, hba->host)
@@ -3107,8 +3117,8 @@ static int ufs_qcom_set_cur_therm_state(struct thermal_cooling_device *tcd,
 	case UFS_QCOM_LVL_AGGR_THERM:
 	case UFS_QCOM_LVL_MAX_THERM:
 		dev_warn(tcd->devdata, "Going into UFS host thermal mitigation state, performance may be impacted before UFS host thermal mitigation stops\n");
-		/* Set the default auto-hiberate idle timer to 1 ms */
-		ufshcd_auto_hibern8_update(hba, ufs_qcom_us_to_ahit(1000));
+		/* Set the default auto-hiberate idle timer to 2 ms */
+		ufshcd_auto_hibern8_update(hba, ufs_qcom_us_to_ahit(2000));
 
 		/* Set the default auto suspend delay to 100 ms */
 		shost_for_each_device(sdev, hba->host)
@@ -3150,6 +3160,7 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 	struct resource *res;
 	struct ufs_qcom_thermal *ut;
 	struct ufs_clk_info *clki;
+	struct device_node *np = dev->of_node;
 
 	host = devm_kzalloc(dev, sizeof(*host), GFP_KERNEL);
 	if (!host) {
@@ -3165,6 +3176,8 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 #if defined(CONFIG_UFS_DBG)
 	host->dbg_en = true;
 #endif
+	host->crash_on_err =
+		of_property_read_bool(np, "qcom,enable_crash_on_err");
 
 	/* Setup the reset control of HCI */
 	host->core_reset = devm_reset_control_get(hba->dev, "rst");
@@ -4141,6 +4154,10 @@ static void ufs_qcom_dump_dbg_regs(struct ufs_hba *hba)
 		ufs_qcom_phy_dbg_register_dump(phy);
 	}
 
+#if IS_ENABLED(CONFIG_SCSI_UFS_TEST_MODE)
+	/* do not recover system if test mode is enabled */
+	BUG_ON(1);
+#endif
 	BUG_ON(host->crash_on_err);
 }
 
@@ -4173,7 +4190,11 @@ void ufs_qcom_read_nvmem_cell(struct ufs_qcom_host *host)
 	 * Value = 0 : UFS 3.x
 	 * Value = 1 : UFS 2.x
 	 */
-	host->limit_phy_submode = !ufs_dev;
+	if (host->ufs_dev_revert)
+		host->limit_phy_submode = ufs_dev;
+	else
+		host->limit_phy_submode = !ufs_dev;
+
 	if (host->limit_phy_submode)
 		dev_info(host->hba->dev, "(%s) UFS device is 3.x, phy_submode = %d\n",
 						__func__, host->limit_phy_submode);
@@ -4212,6 +4233,7 @@ static void ufs_qcom_parse_limits(struct ufs_qcom_host *host)
 	of_property_read_u32(np, "limit-rate", &host->limit_rate);
 	of_property_read_u32(np, "limit-phy-submode", &host->limit_phy_submode);
 	of_property_read_u32(np, "ufs-dev-types", &host->ufs_dev_types);
+	host->ufs_dev_revert = of_property_read_bool(np, "qcom,ufs-dev-revert");
 
 	if (host->ufs_dev_types >= 2)
 		ufs_qcom_read_nvmem_cell(host);
@@ -4343,13 +4365,28 @@ static void ufs_qcom_parse_lpm(struct ufs_qcom_host *host)
 static int ufs_qcom_device_reset(struct ufs_hba *hba)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	int ret;
+
+	/* guarantee device internal cache flush */
+	if (hba->eh_flags && !host->skip_flush) {
+		dev_info(hba->dev, "%s: Waiting for device internal cache flush\n",
+				__func__);
+		ssleep(2);
+		host->skip_flush = true;
+#if IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
+		ufs_sec_check_hwrst_cnt();
+#endif
+	}
+
+	/* Reset UFS Host Controller and PHY */
+	ret = ufs_qcom_host_reset(hba);
+	if (ret)
+		dev_warn(hba->dev, "%s: host reset returned %d\n",
+					__func__, ret);
 
 	/* reset gpio is optional */
 	if (!host->device_reset)
 		return -EOPNOTSUPP;
-
-	/* disable hba before device reset */
-	ufshcd_hba_stop(hba);
 
 	/*
 	 * The UFS device shall detect reset pulses of 1us, sleep for 10us to
@@ -4397,6 +4434,12 @@ static void ufs_qcom_fixup_dev_quirks(struct ufs_hba *hba)
 	ufshcd_fixup_dev_quirks(hba, ufs_qcom_dev_fixups);
 }
 
+static void ufs_qcom_event_notify(struct ufs_hba *hba, enum ufs_event_type evt, void *data)
+{
+#if IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
+	ufs_sec_check_op_err(hba, evt, data);
+#endif
+}
 /*
  * struct ufs_hba_qcom_vops - UFS QCOM specific variant operations
  *
@@ -4422,6 +4465,7 @@ static const struct ufs_hba_variant_ops ufs_hba_qcom_vops = {
 	.setup_xfer_req         = ufs_qcom_qos,
 	.program_key		= ufs_qcom_ice_program_key,
 	.fixup_dev_quirks       = ufs_qcom_fixup_dev_quirks,
+	.event_notify		= ufs_qcom_event_notify,
 };
 
 /**
@@ -4832,6 +4876,10 @@ static void ufs_qcom_register_hooks(void)
 				ufs_qcom_hook_check_int_errors, NULL);
 	register_trace_android_vh_ufs_clock_scaling(
 				ufs_qcom_hook_clock_scaling, NULL);
+#if IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
+	/* register vendor hooks */
+	ufs_sec_register_vendor_hooks();
+#endif
 }
 
 #ifdef CONFIG_ARM_QCOM_CPUFREQ_HW
@@ -4856,6 +4904,40 @@ static int ufs_cpufreq_status(void)
 }
 #endif
 
+static int ufs_qcom_read_boot_config(struct platform_device *pdev)
+{
+	u8 *buf;
+	size_t len;
+	u32 data;
+	struct nvmem_cell *cell;
+
+	cell = nvmem_cell_get(&pdev->dev, "boot_conf");
+	if (IS_ERR(cell)) {
+		dev_err(&pdev->dev, "nvmem get errs\n");
+		return -EINVAL;
+	}
+
+	buf = (u8 *)nvmem_cell_read(cell, &len);
+	if (IS_ERR(buf)) {
+		dev_err(&pdev->dev, "nvmem read err\n");
+		return -EINVAL;
+	}
+
+	/*
+	 * Storage boot device fuse is present in QFPROM_RAW_OEM_CONFIG_ROW0_LSB
+	 * this fuse is blown by bootloader and pupulated in boot_config
+	 * register[1:5] - hence shift read data by 1 and mask it with 0x1f.
+	 */
+	data = (*buf) >> 1 & 0x1f;
+	is_bootdevice_ufs = (data > 0) ? 0 : UFS_BOOT_DEVICE;
+	dev_info(&pdev->dev, "boot_config val = %x, is_bootdevice_ufs = %x\n",
+			*buf, is_bootdevice_ufs);
+
+	kfree(buf);
+	nvmem_cell_put(cell);
+
+	return is_bootdevice_ufs;
+}
 
 /**
  * ufs_qcom_probe - probe routine of the driver
@@ -4869,6 +4951,10 @@ static int ufs_qcom_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 
+	if (!ufs_qcom_read_boot_config(pdev)) {
+		dev_err(dev, "UFS is not boot dev.\n");
+		return err;
+	}
 	/**
 	 * CPUFreq driver is needed for performance reasons.
 	 * Assumption - cpufreq gets probed the second time.
@@ -4914,24 +5000,45 @@ static int ufs_qcom_probe(struct platform_device *pdev)
  */
 static int ufs_qcom_remove(struct platform_device *pdev)
 {
-	struct ufs_hba *hba =  platform_get_drvdata(pdev);
-	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
-	struct ufs_qcom_qos_req *r = host->ufs_qos;
-	struct qos_cpu_group *qcg = r->qcg;
+	struct ufs_hba *hba;
+	struct ufs_qcom_host *host;
+	struct ufs_qcom_qos_req *r;
+	struct qos_cpu_group *qcg;
 	int i;
+
+	if (!is_bootdevice_ufs) {
+		dev_info(&pdev->dev, "UFS is not boot dev.\n");
+		return 0;
+	}
+
+	hba =  platform_get_drvdata(pdev);
+	host = ufshcd_get_variant(hba);
+	r = host->ufs_qos;
+	qcg = r->qcg;
 
 	pm_runtime_get_sync(&(pdev)->dev);
 	for (i = 0; i < r->num_groups; i++, qcg++)
 		remove_group_qos(qcg);
+#if IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
+	ufs_remove_sec_features(hba);
+#endif
 	ufshcd_remove(hba);
 	return 0;
 }
 
 static void ufs_qcom_shutdown(struct platform_device *pdev)
 {
-	struct ufs_hba *hba =  platform_get_drvdata(pdev);
+	struct ufs_hba *hba;
 	struct scsi_device *sdev;
-	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+	struct ufs_qcom_host *host;
+
+	if (!is_bootdevice_ufs) {
+		dev_info(&pdev->dev, "UFS is not boot dev.\n");
+		return;
+	}
+
+	hba =  platform_get_drvdata(pdev);
+	host = ufshcd_get_variant(hba);
 
 	ufs_qcom_log_str(host, "0xdead\n");
 	pm_runtime_get_sync(hba->dev);
@@ -4943,6 +5050,10 @@ static void ufs_qcom_shutdown(struct platform_device *pdev)
 			scsi_remove_device(sdev);
 	}
 	ufshcd_shutdown(hba);
+
+#if IS_ENABLED(CONFIG_SEC_UFS_FEATURE)
+	ufs_sec_print_err_info(hba);
+#endif
 
 	/* UFS_RESET TLMM register cannot reset to POR value '1' after warm
 	 * reset, so deassert ufs device reset line after UFS device shutdown
@@ -4965,9 +5076,31 @@ static const struct acpi_device_id ufs_qcom_acpi_match[] = {
 MODULE_DEVICE_TABLE(acpi, ufs_qcom_acpi_match);
 #endif
 
+static int ufshcd_pltfrm_suspend_wrapper(struct device *dev)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+
+	if (hba == NULL || !is_bootdevice_ufs) {
+		dev_err(dev, "%s UFS is not boot dev.\n", __func__);
+		return 0;
+	}
+	return ufshcd_pltfrm_suspend(dev);
+}
+
+static int ufshcd_pltfrm_resume_wrapper(struct device *dev)
+{
+	struct ufs_hba *hba = dev_get_drvdata(dev);
+
+	if (hba == NULL || !is_bootdevice_ufs) {
+		dev_err(dev, "%s UFS is not boot dev.\n", __func__);
+		return 0;
+	}
+	return ufshcd_pltfrm_resume(dev);
+}
+
 static const struct dev_pm_ops ufs_qcom_pm_ops = {
-	.suspend	= ufshcd_pltfrm_suspend,
-	.resume		= ufshcd_pltfrm_resume,
+	.suspend	= ufshcd_pltfrm_suspend_wrapper,
+	.resume		= ufshcd_pltfrm_resume_wrapper,
 	.runtime_suspend = ufshcd_pltfrm_runtime_suspend,
 	.runtime_resume  = ufshcd_pltfrm_runtime_resume,
 	.runtime_idle    = ufshcd_pltfrm_runtime_idle,

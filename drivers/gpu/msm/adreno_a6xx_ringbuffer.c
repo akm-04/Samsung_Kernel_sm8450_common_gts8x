@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "adreno.h"
@@ -105,6 +106,15 @@ static int a6xx_rb_context_switch(struct adreno_device *adreno_dev,
 
 	cmds[count++] = cp_type7_packet(CP_EVENT_WRITE, 1);
 	cmds[count++] = 0x31;
+
+	if (adreno_is_preemption_enabled(adreno_dev)) {
+		u64 gpuaddr = drawctxt->base.user_ctxt_record->memdesc.gpuaddr;
+		
+		cmds[count++] = cp_type7_packet(CP_SET_PSEUDO_REGISTER, 3);
+		cmds[count++] = SET_PSEUDO_NON_PRIV_SAVE_ADDR;
+		count += cp_gpuaddr(adreno_dev, &cmds[count], gpuaddr);
+		
+	}
 
 	return a6xx_ringbuffer_addcmds(adreno_dev, rb, NULL, F_NOTPROTECTED,
 			cmds, count, 0, NULL);
@@ -373,10 +383,16 @@ static u32 a6xx_get_alwayson_counter(u32 *cmds, u64 gpuaddr)
 static u64 a6xx_get_user_profiling_ib(struct adreno_ringbuffer *rb,
 		struct kgsl_drawobj_cmd *cmdobj, u32 target_offset, u32 *cmds)
 {
-	u32 offset = rb->profile_index * (PROFILE_IB_DWORDS << 2);
-	u32 *ib = rb->profile_desc->hostptr + offset;
-	u64 gpuaddr = rb->profile_desc->gpuaddr + offset;
-	u32 dwords = a6xx_get_alwayson_counter(ib,
+	u32 offset, *ib, dwords;
+	u64 gpuaddr;
+
+	if (IS_ERR(rb->profile_desc))
+		return 0;
+
+	offset = rb->profile_index * (PROFILE_IB_DWORDS << 2);
+	ib = rb->profile_desc->hostptr + offset;
+	gpuaddr = rb->profile_desc->gpuaddr + offset;
+	dwords = a6xx_get_alwayson_counter(ib,
 		cmdobj->profiling_buffer_gpuaddr + target_offset);
 
 	cmds[0] = cp_type7_packet(CP_INDIRECT_BUFFER_PFE, 3);

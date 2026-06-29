@@ -125,14 +125,15 @@ static inline void selinux_mark_initialized(struct selinux_state *state)
 }
 
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
+extern int selinux_enforcing;
 static inline bool enforcing_enabled(struct selinux_state *state)
 {
-	return READ_ONCE(state->enforcing);
+	return selinux_enforcing; // SEC_SELINUX_PORTING_COMMON Change to use RKP
 }
 
 static inline void enforcing_set(struct selinux_state *state, bool value)
 {
-	WRITE_ONCE(state->enforcing, value);
+	selinux_enforcing = value; // SEC_SELINUX_PORTING_COMMON Change to use RKP
 }
 #else
 static inline bool enforcing_enabled(struct selinux_state *state)
@@ -221,6 +222,13 @@ static inline bool selinux_policycap_genfs_seclabel_symlinks(void)
 	return READ_ONCE(state->policycap[POLICYDB_CAPABILITY_GENFS_SECLABEL_SYMLINKS]);
 }
 
+static inline bool selinux_policycap_ioctl_skip_cloexec(void)
+{
+	struct selinux_state *state = &selinux_state;
+
+	return READ_ONCE(state->policycap[POLICYDB_CAPABILITY_IOCTL_SKIP_CLOEXEC]);
+}
+
 static inline bool selinux_android_nlroute_getlink(void)
 {
 	struct selinux_state *state = &selinux_state;
@@ -289,7 +297,13 @@ struct extended_perms {
 };
 
 /* definitions of av_decision.flags */
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+#define AVD_FLAGS_PERMISSIVE	0x0000
+#else
 #define AVD_FLAGS_PERMISSIVE	0x0001
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 
 void security_compute_av(struct selinux_state *state,
 			 u32 ssid, u32 tsid,

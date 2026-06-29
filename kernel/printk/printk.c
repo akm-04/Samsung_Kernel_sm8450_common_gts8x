@@ -149,8 +149,10 @@ static int __control_devkmsg(char *str)
 
 static int __init control_devkmsg(char *str)
 {
-	if (__control_devkmsg(str) < 0)
+	if (__control_devkmsg(str) < 0) {
+		pr_warn("printk.devkmsg: bad option string '%s'\n", str);
 		return 1;
+	}
 
 	/*
 	 * Set sysctl string accordingly:
@@ -169,7 +171,7 @@ static int __init control_devkmsg(char *str)
 	 */
 	devkmsg_log |= DEVKMSG_LOG_MASK_LOCK;
 
-	return 0;
+	return 1;
 }
 __setup("printk.devkmsg=", control_devkmsg);
 
@@ -903,7 +905,7 @@ static int devkmsg_open(struct inode *inode, struct file *file)
 			return err;
 	}
 
-	user = kmalloc(sizeof(struct devkmsg_user), GFP_KERNEL);
+	user = kvmalloc(sizeof(struct devkmsg_user), GFP_KERNEL);
 	if (!user)
 		return -ENOMEM;
 
@@ -933,7 +935,7 @@ static int devkmsg_release(struct inode *inode, struct file *file)
 	ratelimit_state_exit(&user->rs);
 
 	mutex_destroy(&user->lock);
-	kfree(user);
+	kvfree(user);
 	return 0;
 }
 

@@ -102,6 +102,7 @@
 #define USB_HSPHY_1P8_VOL_MAX			1800000 /* uV */
 #define USB_HSPHY_1P8_HPM_LOAD			19000	/* uA */
 
+#define USB2PHY_REFGEN_HPM_LOAD			1200000  /* uA */
 #define USB_HSPHY_VDD_HPM_LOAD			30000	/* uA */
 
 enum port_state {
@@ -136,7 +137,10 @@ struct msm_hsphy {
 	struct regulator	*vdd;
 	struct regulator	*vdda33;
 	struct regulator	*vdda18;
+	struct regulator        *refgen;
 	int			vdd_levels[3]; /* none, low, high */
+	int			refgen_levels[3]; /* 0, REFGEN_VOL_MIN, REFGEN_VOL_MAX */
+	int			vdda18_max_uA;
 
 	bool			clocks_enabled;
 	bool			power_enabled;
@@ -146,6 +150,13 @@ struct msm_hsphy {
 
 	int			*param_override_seq;
 	int			param_override_seq_cnt;
+#if IS_ENABLED(CONFIG_USB_NOTIFIER)
+	int			*param_host_override_seq;
+	int			param_host_override_seq_cnt;
+#endif
+#if IS_ENABLED(CONFIG_USB_PHY_TUNING_QCOM)
+	bool			hsphy_tune_init_done;
+#endif
 
 	void __iomem		*phy_rcal_reg;
 	u32			rcal_mask;
@@ -173,6 +184,159 @@ struct msm_hsphy {
 	u8			param_ovrd2;
 	u8			param_ovrd3;
 };
+
+#undef dev_dbg
+#define dev_dbg dev_err
+
+#if IS_ENABLED(CONFIG_USB_PHY_TUNING_QCOM)
+static ssize_t x0_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	struct msm_hsphy *phy = dev_get_drvdata(dev);
+
+	if (!phy) {
+		pr_err("phy is NULL\n");
+		return -ENODEV;
+	}
+
+	return sprintf(buf, "0x%x\n", (readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X0) & 0xff));
+}
+static ssize_t x0_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct msm_hsphy *phy = dev_get_drvdata(dev);
+	u32 val;
+
+	if (!phy) {
+		pr_err("phy is NULL\n");
+		return -ENODEV;
+	}
+	sscanf(buf, "%x", &val);
+	phy->param_ovrd0 = val & 0xff;
+	if (phy->param_ovrd0)
+		writel_relaxed(phy->param_ovrd0, phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X0);
+	usleep_range(1, 2);
+	pr_info("%s():set x0 by adb :0x%x\n", __func__,
+		(readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X0) & 0xff));
+
+	return count;
+}
+static DEVICE_ATTR_RW(x0);
+
+static ssize_t x1_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	struct msm_hsphy *phy = dev_get_drvdata(dev);
+
+	if (!phy) {
+		pr_err("phy is NULL\n");
+		return -ENODEV;
+	}
+
+	return sprintf(buf, "0x%x\n", (readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X1) & 0xff));
+}
+static ssize_t x1_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct msm_hsphy *phy = dev_get_drvdata(dev);
+	u32 val;
+
+	if (!phy) {
+		pr_err("phy is NULL\n");
+		return -ENODEV;
+	}
+	sscanf(buf, "%x", &val);
+	phy->param_ovrd1 = val & 0xff;
+	if (phy->param_ovrd1)
+		writel_relaxed(phy->param_ovrd1, phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X1);
+	usleep_range(1, 2);
+	pr_info("%s():set x1 by adb :0x%x\n", __func__,
+		(readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X1) & 0xff));
+
+	return count;
+}
+static DEVICE_ATTR_RW(x1);
+
+static ssize_t x2_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	struct msm_hsphy *phy = dev_get_drvdata(dev);
+
+	if (!phy) {
+		pr_err("phy is NULL\n");
+		return -ENODEV;
+	}
+
+	return sprintf(buf, "0x%x\n", (readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X2) & 0xff));
+}
+static ssize_t x2_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct msm_hsphy *phy = dev_get_drvdata(dev);
+	u32 val;
+
+	if (!phy) {
+		pr_err("phy is NULL\n");
+		return -ENODEV;
+	}
+	sscanf(buf, "%x", &val);
+	phy->param_ovrd2 = val & 0xff;
+	if (phy->param_ovrd2)
+		writel_relaxed(phy->param_ovrd2, phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X2);
+	usleep_range(1, 2);
+	pr_info("%s():set x2 by adb :0x%x\n", __func__,
+		(readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X2) & 0xff));
+
+	return count;
+}
+static DEVICE_ATTR_RW(x2);
+
+static ssize_t x3_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	struct msm_hsphy *phy = dev_get_drvdata(dev);
+
+	if (!phy) {
+		pr_err("phy is NULL\n");
+		return -ENODEV;
+	}
+
+	return sprintf(buf, "0x%x\n", (readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X3) & 0xff));
+}
+static ssize_t x3_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct msm_hsphy *phy = dev_get_drvdata(dev);
+	u32 val;
+
+	if (!phy) {
+		pr_err("phy is NULL\n");
+		return -ENODEV;
+	}
+	sscanf(buf, "%x", &val);
+	phy->param_ovrd3 = val & 0xff;
+	if (phy->param_ovrd3)
+		writel_relaxed(phy->param_ovrd3, phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X3);
+	usleep_range(1, 2);
+	pr_info("%s():set x3 by adb :0x%x\n", __func__,
+		(readl_relaxed(phy->base + USB2PHY_USB_PHY_PARAMETER_OVERRIDE_X3) & 0xff));
+
+	return count;
+}
+static DEVICE_ATTR_RW(x3);
+
+static struct attribute *hsphy_attrs[] = {
+	&dev_attr_x0.attr,
+	&dev_attr_x1.attr,
+	&dev_attr_x2.attr,
+	&dev_attr_x3.attr,
+	NULL,
+};
+
+static struct attribute_group hsphy_attr_grp = {
+	.attrs = hsphy_attrs,
+};
+#endif
 
 static void msm_hsphy_enable_clocks(struct msm_hsphy *phy, bool on)
 {
@@ -217,8 +381,12 @@ static int msm_hsphy_enable_power(struct msm_hsphy *phy, bool on)
 		return 0;
 	}
 
-	if (!on)
-		goto disable_vdda33;
+	if (!on) {
+		if (phy->refgen)
+			goto disable_refgen;
+		else
+			goto disable_vdda33;
+	}
 
 	ret = regulator_set_load(phy->vdd, USB_HSPHY_VDD_HPM_LOAD);
 	if (ret < 0) {
@@ -239,7 +407,7 @@ static int msm_hsphy_enable_power(struct msm_hsphy *phy, bool on)
 		goto unconfig_vdd;
 	}
 
-	ret = regulator_set_load(phy->vdda18, USB_HSPHY_1P8_HPM_LOAD);
+	ret = regulator_set_load(phy->vdda18, phy->vdda18_max_uA);
 	if (ret < 0) {
 		dev_err(phy->phy.dev, "Unable to set HPM of vdda18:%d\n", ret);
 		goto disable_vdd;
@@ -279,10 +447,48 @@ static int msm_hsphy_enable_power(struct msm_hsphy *phy, bool on)
 		goto unset_vdd33;
 	}
 
+	if (phy->refgen) {
+		ret = regulator_set_load(phy->refgen, USB2PHY_REFGEN_HPM_LOAD);
+		if (ret < 0) {
+			dev_err(phy->phy.dev, "Unable to set HPM of refgen:%d\n", ret);
+			goto disable_vdda33;
+		}
+
+		ret = regulator_set_voltage(phy->refgen, phy->refgen_levels[1],
+						phy->refgen_levels[2]);
+		if (ret) {
+			dev_err(phy->phy.dev,
+					"Unable to set voltage for refgen:%d\n", ret);
+			goto put_refgen_lpm;
+		}
+
+		ret = regulator_enable(phy->refgen);
+		if (ret) {
+			dev_err(phy->phy.dev, "Unable to enable refgen:%d\n", ret);
+			goto unset_refgen;
+		}
+	}
+
 	phy->power_enabled = true;
 
 	pr_debug("%s(): HSUSB PHY's regulators are turned ON.\n", __func__);
 	return ret;
+
+disable_refgen:
+	ret = regulator_disable(phy->refgen);
+	if (ret)
+		dev_err(phy->phy.dev, "Unable to disable refgen:%d\n", ret);
+
+unset_refgen:
+	ret = regulator_set_voltage(phy->refgen, phy->refgen_levels[0], phy->refgen_levels[2]);
+	if (ret)
+		dev_err(phy->phy.dev,
+				"Unable to set (0) voltage for refgen:%d\n", ret);
+
+put_refgen_lpm:
+	ret = regulator_set_load(phy->refgen, 0);
+	if (ret < 0)
+		dev_err(phy->phy.dev, "Unable to set (0) HPM of refgen\n");
 
 disable_vdda33:
 	ret = regulator_disable(phy->vdda33);
@@ -411,6 +617,7 @@ static int msm_hsphy_init(struct usb_phy *uphy)
 				qcom_scm_io_writel(phy->eud_reg, 0x0);
 				phy->re_enable_eud = true;
 			} else {
+				msm_hsphy_enable_clocks(phy, true);
 				ret = msm_hsphy_enable_power(phy, true);
 				return ret;
 			}
@@ -448,6 +655,12 @@ static int msm_hsphy_init(struct usb_phy *uphy)
 				VBUSVLDEXT0, VBUSVLDEXT0);
 
 	/* set parameter ovrride  if needed */
+#if IS_ENABLED(CONFIG_USB_NOTIFIER)
+	if (phy->param_host_override_seq && (phy->phy.flags & PHY_HOST_MODE))
+		hsusb_phy_write_seq(phy->base, phy->param_host_override_seq,
+				phy->param_host_override_seq_cnt, 0);
+	else
+#endif
 	if (phy->param_override_seq)
 		hsusb_phy_write_seq(phy->base, phy->param_override_seq,
 				phy->param_override_seq_cnt, 0);
@@ -1095,7 +1308,7 @@ static void msm_hsphy_port_state_work(struct work_struct *w)
 							port_det_w.work);
 	unsigned long delay = 0;
 	int ret;
-	u32 status;
+	u32 status = 0;
 
 	dev_dbg(phy->phy.dev, "state: %d\n", phy->port_state);
 
@@ -1143,20 +1356,22 @@ static void msm_hsphy_port_state_work(struct work_struct *w)
 
 		status = msm_hsphy_chg_det_status(phy, STATE_DCD);
 
-		if (!status) {
+		/*
+		 * Floating or non compliant charger which pull D+ all the time
+		 * will cause DCD timeout and end up being detected as SDP. This
+		 * is an acceptable behavior compared to false negative of
+		 * slower insertion of SDP/CDP detection
+		 */
+		if (!status || phy->dcd_timeout >= CHG_DCD_TIMEOUT_MSEC) {
+			dev_dbg(phy->phy.dev, "DCD status=%d timeout=%d\n",
+							status, phy->dcd_timeout);
 			msm_hsphy_chg_det_disable_seq(phy, STATE_DCD);
 			msm_hsphy_chg_det_enable_seq(phy, STATE_PRIMARY);
 			phy->port_state = PORT_PRIMARY_IN_PROGRESS;
 			delay = CHG_PRIMARY_DET_TIME_MSEC;
-		} else if (phy->dcd_timeout < CHG_DCD_TIMEOUT_MSEC) {
+		} else {
 			delay = CHG_DCD_POLL_TIME_MSEC;
 			phy->dcd_timeout += delay;
-		} else {
-			msm_hsphy_notify_charger(phy,
-						POWER_SUPPLY_TYPE_USB_DCP);
-			msm_hsphy_chg_det_disable_seq(phy, STATE_DCD);
-			msm_hsphy_unprepare_chg_det(phy);
-			phy->port_state = PORT_CHG_DET_DONE;
 		}
 
 		break;
@@ -1185,6 +1400,7 @@ static void msm_hsphy_port_state_work(struct work_struct *w)
 			msm_hsphy_unprepare_chg_det(phy);
 			msm_hsphy_notify_charger(phy, POWER_SUPPLY_TYPE_USB);
 			msm_hsphy_notify_extcon(phy, EXTCON_USB, 1);
+			dev_info(phy->phy.dev, "Connected to SDP\n");
 			phy->port_state = PORT_CHG_DET_DONE;
 		}
 		break;
@@ -1203,10 +1419,16 @@ static void msm_hsphy_port_state_work(struct work_struct *w)
 		if (status) {
 			msm_hsphy_notify_charger(phy,
 						POWER_SUPPLY_TYPE_USB_DCP);
+			dev_info(phy->phy.dev, "Connected to DCP\n");
 		} else {
 			msm_hsphy_notify_charger(phy,
 						POWER_SUPPLY_TYPE_USB_CDP);
 			msm_hsphy_notify_extcon(phy, EXTCON_USB, 1);
+			/*
+			 * Drive a pulse on DP to ensure proper CDP detection
+			 */
+			dev_info(phy->phy.dev, "Connected to CDP, pull DP up\n");
+			usb_phy_drive_dp_pulse(&phy->phy);
 		}
 		/*
 		 * Fall through to check if cable got disconnected
@@ -1271,6 +1493,39 @@ static int msm_hsphy_extcon_register(struct msm_hsphy *phy)
 			EXTCON_PROP_USB_TYPEC_POLARITY);
 	extcon_set_property_capability(phy->usb_extcon, EXTCON_USB_HOST,
 			EXTCON_PROP_USB_SS);
+	return 0;
+}
+
+static int usb2_get_regulators(struct msm_hsphy *phy)
+{
+	struct device *dev = phy->phy.dev;
+
+	phy->refgen = NULL;
+
+	phy->vdd = devm_regulator_get(dev, "vdd");
+	if (IS_ERR(phy->vdd)) {
+		dev_err(dev, "unable to get vdd supply\n");
+		return PTR_ERR(phy->vdd);
+	}
+
+	phy->vdda33 = devm_regulator_get(dev, "vdda33");
+	if (IS_ERR(phy->vdda33)) {
+		dev_err(dev, "unable to get vdda33 supply\n");
+		return PTR_ERR(phy->vdda33);
+	}
+
+	phy->vdda18 = devm_regulator_get(dev, "vdda18");
+	if (IS_ERR(phy->vdda18)) {
+		dev_err(dev, "unable to get vdda18 supply\n");
+		return PTR_ERR(phy->vdda18);
+	}
+
+	if (of_property_read_bool(dev->of_node, "refgen-supply")) {
+		phy->refgen = devm_regulator_get_optional(dev, "refgen");
+		if (IS_ERR(phy->refgen))
+			dev_err(dev, "unable to get refgen supply\n");
+	}
+
 	return 0;
 }
 
@@ -1389,6 +1644,48 @@ static int msm_hsphy_probe(struct platform_device *pdev)
 		}
 	}
 
+#if IS_ENABLED(CONFIG_USB_NOTIFIER)
+	phy->param_host_override_seq_cnt = of_property_count_elems_of_size(
+					dev->of_node,
+					"qcom,param-host-override-seq",
+					sizeof(*phy->param_host_override_seq));
+	if (phy->param_host_override_seq_cnt > 0) {
+		phy->param_host_override_seq = devm_kcalloc(dev,
+					phy->param_host_override_seq_cnt,
+					sizeof(*phy->param_host_override_seq),
+					GFP_KERNEL);
+		if (!phy->param_host_override_seq)
+			return -ENOMEM;
+
+		if (phy->param_host_override_seq_cnt % 2) {
+			dev_err(dev, "invalid param_host_override_seq_len\n");
+			return -EINVAL;
+		}
+
+		ret = of_property_read_u32_array(dev->of_node,
+				"qcom,param-host-override-seq",
+				phy->param_host_override_seq,
+				phy->param_host_override_seq_cnt);
+		if (ret) {
+			dev_err(dev, "qcom,param-host-override-seq read failed %d\n",
+				ret);
+			return ret;
+		}
+	}
+#endif
+
+	     /*
+	      * Some targets use PMOS LDOs, while others use NMOS LDOs,
+	      * but there is no support for NMOS LDOs whose load current threshold
+	      * for entering HPM is 30mA, which is greater than 19mA.
+	      * As a result of this property being passed in dt, the value of
+	      * USB_HSPHY_1P8_HPM_LOAD will be modified to meet the requirements.
+	      */
+
+	if (of_property_read_s32(dev->of_node, "qcom,vdd18-max-load-uA",
+			&phy->vdda18_max_uA) || !phy->vdda18_max_uA)
+		phy->vdda18_max_uA = USB_HSPHY_1P8_HPM_LOAD;
+
 	ret = of_property_read_u32_array(dev->of_node, "qcom,vdd-voltage-level",
 					 (u32 *) phy->vdd_levels,
 					 ARRAY_SIZE(phy->vdd_levels));
@@ -1397,27 +1694,15 @@ static int msm_hsphy_probe(struct platform_device *pdev)
 		goto err_ret;
 	}
 
+	ret = of_property_read_u32_array(dev->of_node, "qcom,refgen-voltage-level",
+					(u32 *) phy->refgen_levels,
+					ARRAY_SIZE(phy->refgen_levels));
+	if (ret)
+		dev_err(dev, "error reading qcom,refgen-voltage-level property\n");
 
-	phy->vdd = devm_regulator_get(dev, "vdd");
-	if (IS_ERR(phy->vdd)) {
-		dev_err(dev, "unable to get vdd supply\n");
-		ret = PTR_ERR(phy->vdd);
-		goto err_ret;
-	}
-
-	phy->vdda33 = devm_regulator_get(dev, "vdda33");
-	if (IS_ERR(phy->vdda33)) {
-		dev_err(dev, "unable to get vdda33 supply\n");
-		ret = PTR_ERR(phy->vdda33);
-		goto err_ret;
-	}
-
-	phy->vdda18 = devm_regulator_get(dev, "vdda18");
-	if (IS_ERR(phy->vdda18)) {
-		dev_err(dev, "unable to get vdda18 supply\n");
-		ret = PTR_ERR(phy->vdda18);
-		goto err_ret;
-	}
+	ret = usb2_get_regulators(phy);
+	if (ret)
+		return ret;
 
 	mutex_init(&phy->phy_lock);
 	platform_set_drvdata(pdev, phy);
@@ -1466,13 +1751,24 @@ static int msm_hsphy_probe(struct platform_device *pdev)
 
 	msm_hsphy_create_debugfs(phy);
 
+#if IS_ENABLED(CONFIG_USB_PHY_TUNING_QCOM)
+	phy->hsphy_tune_init_done = true;
+	ret = sysfs_create_group(&pdev->dev.kobj, &hsphy_attr_grp);
+	if (ret) {
+		phy->hsphy_tune_init_done = false;
+		pr_err("%s: hsphy sysfs fail, ret %d", __func__, ret);
+	}
+#endif
 	/*
 	 * EUD may be enable in boot loader and to keep EUD session alive across
 	 * kernel boot till USB phy driver is initialized based on cable status,
 	 * keep LDOs on here.
 	 */
-	if (phy->eud_enable_reg && readl_relaxed(phy->eud_enable_reg))
+	if (phy->eud_enable_reg && readl_relaxed(phy->eud_enable_reg)) {
+		msm_hsphy_enable_clocks(phy, true);
 		msm_hsphy_enable_power(phy, true);
+	}
+
 	return 0;
 
 err_ret:
@@ -1496,6 +1792,11 @@ static int msm_hsphy_remove(struct platform_device *pdev)
 
 	msm_hsphy_enable_clocks(phy, false);
 	msm_hsphy_enable_power(phy, false);
+
+#if IS_ENABLED(CONFIG_USB_PHY_TUNING_QCOM)
+	if (phy->hsphy_tune_init_done)
+		sysfs_remove_group(&pdev->dev.kobj, &hsphy_attr_grp);
+#endif
 	return 0;
 }
 

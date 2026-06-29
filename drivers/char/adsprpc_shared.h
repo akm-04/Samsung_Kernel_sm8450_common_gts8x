@@ -91,6 +91,12 @@
 #define FASTRPC_INIT_CREATE_STATIC  2
 #define FASTRPC_INIT_ATTACH_SENSORS 3
 
+/*Retrives method attribute from the scalars parameter*/
+#define REMOTE_SCALARS_METHOD_ATTR(dwScalars)   (((dwScalars) >> 29) & 0x7)
+
+/*Retrives method index from the scalars parameter*/
+#define REMOTE_SCALARS_METHOD(dwScalars)        (((dwScalars) >> 24) & 0x1f)
+
 /* Retrives number of input buffers from the scalars parameter */
 #define REMOTE_SCALARS_INBUFS(sc)        (((sc) >> 16) & 0x0ff)
 
@@ -475,7 +481,7 @@ struct fastrpc_ioctl_control {
 };
 
 #define FASTRPC_MAX_DSP_ATTRIBUTES	(256)
-#define FASTRPC_MAX_ATTRIBUTES	(259)
+#define FASTRPC_MAX_ATTRIBUTES	(261)
 
 enum fastrpc_dsp_capability {
 	ASYNC_FASTRPC_CAP = 9,

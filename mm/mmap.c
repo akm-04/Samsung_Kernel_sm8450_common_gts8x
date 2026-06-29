@@ -52,6 +52,7 @@
 #include <asm/cacheflush.h>
 #include <asm/tlb.h>
 #include <asm/mmu_context.h>
+#include <linux/ratelimit.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/mmap.h>
@@ -2213,18 +2214,17 @@ unsigned long vm_unmapped_area(struct vm_unmapped_area_info *info)
 	else
 		addr = unmapped_area(info);
 
+	if (IS_ERR_VALUE(addr)) {
+		pr_warn_ratelimited("%s err:%ld total_vm:0x%lx flags:0x%lx len:0x%lx low:0x%lx high:0x%lx mask:0x%lx offset:0x%lx\n",
+			__func__, addr, current->mm->total_vm, info->flags,
+			info->length, info->low_limit, info->high_limit,
+			info->align_mask, info->align_offset);
+	}
+
 	trace_vm_unmapped_area(addr, info);
 	return addr;
 }
 EXPORT_SYMBOL_GPL(vm_unmapped_area);
-
-#ifndef arch_get_mmap_end
-#define arch_get_mmap_end(addr)	(TASK_SIZE)
-#endif
-
-#ifndef arch_get_mmap_base
-#define arch_get_mmap_base(addr, base) (base)
-#endif
 
 /* Get an address range which is currently unmapped.
  * For shmat() with addr=0.
@@ -2681,7 +2681,7 @@ static int __init cmdline_parse_stack_guard_gap(char *p)
 	if (!*endptr)
 		stack_guard_gap = val << PAGE_SHIFT;
 
-	return 0;
+	return 1;
 }
 __setup("stack_guard_gap=", cmdline_parse_stack_guard_gap);
 

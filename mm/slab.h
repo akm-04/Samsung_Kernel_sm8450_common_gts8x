@@ -47,6 +47,9 @@ struct kmem_cache {
 #include <linux/random.h>
 #include <linux/sched/mm.h>
 #include <linux/android_vendor.h>
+#ifdef CONFIG_KDP
+#include <linux/kdp.h>
+#endif
 
 /*
  * State of the slab allocator.
@@ -169,7 +172,7 @@ static inline slab_flags_t kmem_cache_flags(unsigned int object_size,
 #define SLAB_CACHE_FLAGS (SLAB_NOLEAKTRACE | SLAB_RECLAIM_ACCOUNT | \
 			  SLAB_TEMPORARY | SLAB_ACCOUNT)
 #else
-#define SLAB_CACHE_FLAGS (0)
+#define SLAB_CACHE_FLAGS (SLAB_NOLEAKTRACE)
 #endif
 
 /* Common flags available with current configuration */
@@ -558,6 +561,10 @@ static inline struct kmem_cache *slab_pre_alloc_hook(struct kmem_cache *s,
 	if (should_failslab(s, flags))
 		return NULL;
 
+#ifdef CONFIG_KDP
+	if (is_kdp_kmem_cache(s))
+		return s;
+#endif
 	if (!memcg_slab_pre_alloc_hook(s, objcgp, size, flags))
 		return NULL;
 

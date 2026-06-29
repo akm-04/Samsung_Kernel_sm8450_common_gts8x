@@ -111,6 +111,19 @@
 
 #undef CREATE_TRACE_POINTS
 #include <trace/hooks/sched.h>
+
+#ifdef CONFIG_SECURITY_DEFEX
+#include <linux/defex.h>
+#endif
+
+#ifdef CONFIG_KDP_CRED
+#include <linux/kdp.h>
+#endif
+
+#ifdef CONFIG_PROC_FSLOG
+#include <linux/fslog.h>
+#endif
+
 /*
  * Minimum number of threads to boot the kernel
  */
@@ -978,6 +991,10 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 #ifdef CONFIG_MEMCG
 	tsk->active_memcg = NULL;
 #endif
+#ifdef CONFIG_TASK_HAS_ALLOC_FREE_STAT
+	tsk->alloc_sum = 0;
+	tsk->free_sum = 0;
+#endif
 
 	android_init_vendor_data(tsk, 1);
 	android_init_oem_data(tsk, 1);
@@ -1150,8 +1167,11 @@ void mmput(struct mm_struct *mm)
 {
 	might_sleep();
 
-	if (atomic_dec_and_test(&mm->mm_users))
+	if (atomic_dec_and_test(&mm->mm_users)) {
+		RECLAIMER_LOG("UMR: B|last_exit");
 		__mmput(mm);
+		RECLAIMER_LOG("UMR: E|last_exit");
+	}
 }
 EXPORT_SYMBOL_GPL(mmput);
 
@@ -2315,10 +2335,6 @@ static __latent_entropy struct task_struct *copy_process(
 		goto bad_fork_cancel_cgroup;
 	}
 
-	/* past the last point of failure */
-	if (pidfile)
-		fd_install(pidfd, pidfile);
-
 	init_task_pid_links(p);
 	if (likely(p->pid)) {
 		ptrace_init_task(p, (clone_flags & CLONE_PTRACE) || trace);
@@ -2367,6 +2383,9 @@ static __latent_entropy struct task_struct *copy_process(
 	syscall_tracepoint_update(p);
 	write_unlock_irq(&tasklist_lock);
 
+	if (pidfile)
+		fd_install(pidfd, pidfile);
+
 	proc_fork_connector(p);
 	sched_post_fork(p);
 	cgroup_post_fork(p, args);
@@ -2377,6 +2396,10 @@ static __latent_entropy struct task_struct *copy_process(
 
 	copy_oom_score_adj(clone_flags, p);
 
+#ifdef CONFIG_KDP_CRED
+	if (kdp_enable)
+		kdp_assign_pgd(p);
+#endif
 	return p;
 
 bad_fork_cancel_cgroup:
@@ -2538,6 +2561,9 @@ pid_t kernel_clone(struct kernel_clone_args *args)
 	pid = get_task_pid(p, PIDTYPE_PID);
 	nr = pid_vnr(pid);
 
+#ifdef CONFIG_SECURITY_DEFEX
+	task_defex_zero_creds(p);
+#endif
 	if (clone_flags & CLONE_PARENT_SETTID)
 		put_user(nr, args->parent_tid);
 

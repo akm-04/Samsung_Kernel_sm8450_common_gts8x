@@ -15,7 +15,7 @@
 #include <soc/qcom/secure_buffer.h>
 #include "qcom_bitstream_contig_heap.h"
 
-static bool enable_bitstream_contig_heap;
+static bool enable_bitstream_contig_heap = true;
 static struct dma_heap *display_heap;
 
 static struct dma_buf *bitstream_contig_heap_allocate(struct dma_heap *heap,
@@ -86,4 +86,4 @@ int qcom_add_bitstream_contig_heap(char *name)
 	return 0;
 }
 
-module_param(enable_bitstream_contig_heap, bool, 0);
+module_param(enable_bitstream_contig_heap, bool, S_IRUGO);
