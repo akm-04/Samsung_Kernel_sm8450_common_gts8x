@@ -903,7 +903,7 @@ static int devkmsg_open(struct inode *inode, struct file *file)
 			return err;
 	}
 
-	user = kmalloc(sizeof(struct devkmsg_user), GFP_KERNEL);
+	user = kvmalloc(sizeof(struct devkmsg_user), GFP_KERNEL);
 	if (!user)
 		return -ENOMEM;
 
@@ -933,7 +933,7 @@ static int devkmsg_release(struct inode *inode, struct file *file)
 	ratelimit_state_exit(&user->rs);
 
 	mutex_destroy(&user->lock);
-	kfree(user);
+	kvfree(user);
 	return 0;
 }
 
@@ -2445,6 +2445,7 @@ void console_unlock(void)
 	bool do_cond_resched, retry;
 	struct printk_info info;
 	struct printk_record r;
+	bool locked = false;
 
 	if (console_suspended) {
 		up_console_sem();
@@ -2487,7 +2488,18 @@ again:
 		size_t len;
 
 		printk_safe_enter_irqsave(flags);
-		raw_spin_lock(&logbuf_lock);
+		if(oops_in_progress) {
+			int cnt = 10000;
+			//FIXME: trying to spinlock for 10ms, deadlock by recursive lock suspected if it fails to lock
+			while(!locked && --cnt) {
+				locked = raw_spin_trylock(&logbuf_lock);
+				udelay(1);
+			}
+		}
+		else {
+			raw_spin_lock(&logbuf_lock);
+			locked = true;
+		}
 skip:
 		if (!prb_read_valid(prb, console_seq, &r))
 			break;
@@ -2531,7 +2543,10 @@ skip:
 				console_msg_format & MSG_FORMAT_SYSLOG,
 				printk_time);
 		console_seq++;
-		raw_spin_unlock(&logbuf_lock);
+		if(locked) {
+			raw_spin_unlock(&logbuf_lock);
+			locked = false;
+		}
 
 		/*
 		 * While actively printing out messages, if another printk()
@@ -2558,7 +2573,10 @@ skip:
 
 	console_locked = 0;
 
-	raw_spin_unlock(&logbuf_lock);
+	if(locked) {
+		raw_spin_unlock(&logbuf_lock);
+		locked = false;
+	}
 
 	up_console_sem();
 
@@ -2568,9 +2586,23 @@ skip:
 	 * there's a new owner and the console_unlock() from them will do the
 	 * flush, no worries.
 	 */
-	raw_spin_lock(&logbuf_lock);
+
+	if(oops_in_progress) {
+		int cnt = 10000;
+		while(!locked && --cnt) {
+			locked = raw_spin_trylock(&logbuf_lock);
+			udelay(1);
+		}
+	}
+	else {
+		raw_spin_lock(&logbuf_lock);
+		locked = true;
+	}
 	retry = prb_read_valid(prb, console_seq, NULL);
-	raw_spin_unlock(&logbuf_lock);
+	if(locked) {
+		raw_spin_unlock(&logbuf_lock);
+		locked = false;
+	}
 	printk_safe_exit_irqrestore(flags);
 
 	if (retry && console_trylock())

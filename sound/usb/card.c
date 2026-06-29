@@ -888,6 +888,7 @@ static int usb_audio_probe(struct usb_interface *intf,
 	int ifnum;
 	u32 id;
 
+	pr_info("%s : audio probe start!\n",__func__);
 	alts = &intf->altsetting[0];
 	ifnum = get_iface_desc(alts)->bInterfaceNumber;
 	id = USB_ID(le16_to_cpu(dev->descriptor.idVendor),
@@ -1011,6 +1012,7 @@ static int usb_audio_probe(struct usb_interface *intf,
 		if (err < 0)
 			goto __error;
 	}
+	pr_info("%s : card %d is registered.\n", __func__, chip->card->number);
 
 	if (quirk && quirk->shares_media_device) {
 		/* don't want to fail when snd_media_device_create() fails */
@@ -1029,6 +1031,7 @@ static int usb_audio_probe(struct usb_interface *intf,
 	return 0;
 
  __error:
+	pr_info("%s : card probe fail.\n", __func__);
 	if (chip) {
 		/* chip->active is inside the chip->card object,
 		 * decrement before memory is possibly returned.
@@ -1054,6 +1057,7 @@ static void usb_audio_disconnect(struct usb_interface *intf)
 	if (chip == USB_AUDIO_IFACE_UNUSED)
 		return;
 
+	pr_info("%s : disconnect!\n", __func__);  
 	card = chip->card;
 
 	if (chip->disconnect_cb)
@@ -1146,7 +1150,7 @@ void snd_usb_unlock_shutdown(struct snd_usb_audio *chip)
 int snd_usb_autoresume(struct snd_usb_audio *chip)
 {
 	int i, err;
-
+	pr_info("%s : ++!\n", __func__);
 	if (atomic_read(&chip->shutdown))
 		return -EIO;
 	if (atomic_inc_return(&chip->active) != 1)
@@ -1168,7 +1172,7 @@ int snd_usb_autoresume(struct snd_usb_audio *chip)
 void snd_usb_autosuspend(struct snd_usb_audio *chip)
 {
 	int i;
-
+	pr_info("%s : --!\n", __func__);
 	if (atomic_read(&chip->shutdown))
 		return;
 	if (!atomic_dec_and_test(&chip->active))
@@ -1188,6 +1192,7 @@ static int usb_audio_suspend(struct usb_interface *intf, pm_message_t message)
 	if (chip == USB_AUDIO_IFACE_UNUSED)
 		return 0;
 
+	dev_info(&intf->dev, "suspend\n");
 	if (!chip->num_suspended_intf++) {
 		list_for_each_entry(as, &chip->pcm_list, list) {
 			snd_usb_pcm_suspend(as);
@@ -1219,6 +1224,7 @@ static int __usb_audio_resume(struct usb_interface *intf, bool reset_resume)
 	if (chip == USB_AUDIO_IFACE_UNUSED)
 		return 0;
 
+	dev_info(&intf->dev, "resume\n");
 	atomic_inc(&chip->active); /* avoid autopm */
 	if (chip->num_suspended_intf > 1)
 		goto out;
@@ -1257,11 +1263,13 @@ err_out:
 
 static int usb_audio_resume(struct usb_interface *intf)
 {
+	dev_info(&intf->dev, "resume\n");
 	return __usb_audio_resume(intf, false);
 }
 
 static int usb_audio_reset_resume(struct usb_interface *intf)
 {
+	dev_info(&intf->dev, "reset_resume\n");
 	return __usb_audio_resume(intf, true);
 }
 #else

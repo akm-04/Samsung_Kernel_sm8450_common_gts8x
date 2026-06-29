@@ -5956,7 +5956,7 @@ static int __init regulator_init_complete(void)
 	 * command line option might be useful.
 	 */
 	schedule_delayed_work(&regulator_init_complete_work,
-			      msecs_to_jiffies(30000));
+			      msecs_to_jiffies(90000));
 
 	return 0;
 }
