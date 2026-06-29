@@ -242,9 +242,14 @@ static int qpnp_tm_get_temp(void *data, int *temp)
 			return ret;
 	} else {
 		ret = iio_read_channel_processed(chip->adc, &mili_celsius);
-		if (ret < 0)
+		if (ret < 0) {
+			dev_err(chip->dev, "iio_read_channel_processed ret = %d\n", ret);
 			return ret;
-
+		}
+#if IS_ENABLED(CONFIG_SEC_PM)
+		pr_info("%s: %s last=%d, temp=%d\n", __func__,
+				chip->tz_dev->type, chip->temp, mili_celsius);
+#endif
 		chip->temp = mili_celsius;
 	}
 
@@ -389,6 +394,9 @@ static irqreturn_t qpnp_tm_isr(int irq, void *data)
 {
 	struct qpnp_tm_chip *chip = data;
 
+#if IS_ENABLED(CONFIG_SEC_PM)
+	pr_info("%s: %s\n", __func__, chip->tz_dev->type);
+#endif
 	thermal_zone_device_update(chip->tz_dev, THERMAL_EVENT_UNSPECIFIED);
 
 	return IRQ_HANDLED;

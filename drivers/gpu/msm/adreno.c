@@ -49,23 +49,6 @@ int adreno_wake_nice = -7;
 /* Number of milliseconds to stay active active after a wake on touch */
 unsigned int adreno_wake_timeout = 100;
 
-bool adreno_regulator_disable_poll(struct kgsl_device *device,
-		struct regulator *reg, u32 offset, u32 timeout)
-{
-	u32 val;
-	int ret;
-
-	if (IS_ERR_OR_NULL(reg))
-		return true;
-
-	regulator_disable(reg);
-
-	ret = kgsl_regmap_read_poll_timeout(&device->regmap, offset,
-		val, !(val & BIT(31)), 100, timeout * 1000);
-
-	return ret ? false : true;
-}
-
 static u32 get_ucode_version(const u32 *data)
 {
 	u32 version;
@@ -384,6 +367,11 @@ void adreno_hang_int_callback(struct adreno_device *adreno_dev, int bit)
 {
 	dev_crit_ratelimited(KGSL_DEVICE(adreno_dev)->dev,
 				"MISC: GPU hang detected\n");
+
+#if IS_ENABLED(CONFIG_SEC_ABC)
+	sec_abc_send_event("MODULE=gpu_qc@WARN=gpu_fault");
+#endif 
+
 	adreno_irqctrl(adreno_dev, 0);
 
 	/* Trigger a fault in the dispatcher - this will effect a restart */
@@ -664,9 +652,13 @@ static int adreno_of_parse_pwrlevels(struct adreno_device *adreno_dev,
 		level->gpu_freq = freq;
 		level->bus_freq = bus;
 		level->voltage_level = voltage;
+		level->cx_min = 0xffffffff;
 
 		of_property_read_u32(child, "qcom,acd-level",
 			&level->acd_level);
+
+		of_property_read_u32(child, "qcom,min-cx-level",
+			&level->cx_min);
 
 		level->bus_min = level->bus_freq;
 		kgsl_of_property_read_ddrtype(child,

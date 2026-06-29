@@ -58,6 +58,8 @@
 #include <linux/soc/qcom/qmi.h>
 #include <linux/mem-buf.h>
 
+#include <linux/sec_debug.h>
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/fastrpc.h>
 
@@ -210,7 +212,7 @@
 #define MAX_PERSISTENT_HEADERS    (25)
 
 /* Length of glink transaction history to store */
-#define GLINK_MSG_HISTORY_LEN (128)
+#define GLINK_MSG_HISTORY_LEN (512)
 
 #define PERF_CAPABILITY   (1 << 1)
 
@@ -542,7 +544,14 @@ struct fastrpc_channel_ctx {
 	/* Store gfa structure debug details */
 	struct fastrpc_buf *buf;
 };
-
+struct exit_debug {
+	int pid;
+	int tid;
+	int error_code;
+	int stage;
+	int64_t ns;
+	int mid;
+};
 struct fastrpc_apps {
 	struct fastrpc_channel_ctx *channel;
 	struct cdev cdev;
@@ -577,6 +586,8 @@ struct fastrpc_apps {
 	void *ramdump_handle;
 	bool enable_ramdump;
 	struct mutex mut_uid;
+	int exit_debug_index;
+	struct exit_debug debug[4000];
 };
 
 struct fastrpc_mmap {
@@ -697,7 +708,7 @@ struct fastrpc_file {
 	uint32_t poll_timeout;
 	bool is_unsigned_pd;
 	/* Flag to indicate dynamic process creation status*/
-	bool in_process_create;
+	enum fastrpc_process_create_state dsp_process_state;
 };
 
 static struct fastrpc_apps gfa;
@@ -2463,7 +2474,11 @@ static void fastrpc_ramdump_collection(int cid)
 				__func__, ret);
 		hlist_del_init(&buf->hn_init);
 		if (fl) {
-			complete(&fl->work);
+			spin_lock_irqsave(&me->hlock, irq_flags);
+			if (fl->file_close)
+				complete(&fl->work);
+			fl->is_ramdump_pend = false;
+			spin_unlock_irqrestore(&me->hlock, irq_flags);
 		}
 	}
 }
@@ -3351,6 +3366,9 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	struct timespec64 invoket = {0};
 	uint64_t *perf_counter = NULL;
 	bool isasyncinvoke = false, isworkdone = false;
+	struct fastrpc_apps *me = &gfa;
+	struct exit_debug *debug_log = NULL;
+	int exit_debug_flag = 0;
 
 	cid = fl->cid;
 	VERIFY(err, VALID_FASTRPC_CID(cid) &&
@@ -3365,6 +3383,14 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	if (fl->profile) {
 		ktime_get_real_ts64(&invoket);
 	}
+	debug_log = &me->debug[me->exit_debug_index];
+	if (invoke->handle == 4 && (REMOTE_SCALARS_METHOD(invoke->sc) <= 3 && REMOTE_SCALARS_METHOD(invoke->sc) >= 1)) {
+			exit_debug_flag = 1;
+			debug_log->tid = current->pid;
+			debug_log->pid = fl->tgid;
+			debug_log->ns = get_timestamp_in_ns();
+			debug_log->mid = REMOTE_SCALARS_METHOD(invoke->sc);
+		}
 
 	if (!kernel) {
 		VERIFY(err, invoke->handle !=
@@ -3427,6 +3453,9 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 		goto bail;
 	if (isasyncinvoke)
 		goto invoke_end;
+	if (exit_debug_flag)
+		debug_log->stage = 1;
+
  wait:
 	/* Poll mode allowed only for non-static handle calls to dynamic CDSP process */
 	if (fl->poll_mode && (invoke->handle > FASTRPC_STATIC_HANDLE_MAX)
@@ -3463,6 +3492,9 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	VERIFY(err, 0 == (err = ctx->retval));
 	if (err)
 		goto bail;
+	if (exit_debug_flag)
+		debug_log->stage = 2;
+
  bail:
 	if (ctx && interrupted == -ERESTARTSYS) {
 		trace_fastrpc_context_interrupt(cid, (uint64_t)ctx,
@@ -3493,6 +3525,16 @@ invoke_end:
 	if (fl->profile && !interrupted && isasyncinvoke)
 		fastrpc_update_invoke_count(invoke->handle, perf_counter,
 						&invoket);
+	if (exit_debug_flag && err == 0)
+		debug_log->stage = 3;
+
+	if (exit_debug_flag) {
+		debug_log->error_code = err;
+		debug_log->ns = get_timestamp_in_ns() - debug_log->ns;
+		me->exit_debug_index++;
+		if (me->exit_debug_index > 3999)
+			me->exit_debug_index = 0;
+	}
 	return err;
 }
 
@@ -3926,13 +3968,13 @@ static int fastrpc_init_create_dynamic_process(struct fastrpc_file *fl,
 	} inbuf;
 
 	spin_lock(&fl->hlock);
-	if (fl->in_process_create) {
+	if (fl->dsp_process_state) {
 		err = -EALREADY;
 		ADSPRPC_ERR("Already in create dynamic process\n");
 		spin_unlock(&fl->hlock);
 		return err;
 	}
-	fl->in_process_create = true;
+	fl->dsp_process_state = PROCESS_CREATE_IS_INPROGRESS;
 	spin_unlock(&fl->hlock);
 	inbuf.pgid = fl->tgid;
 	inbuf.namelen = strlen(current->comm) + 1;
@@ -4090,9 +4132,11 @@ bail:
 		fastrpc_mmap_free(file, 0);
 		mutex_unlock(&fl->map_mutex);
 	}
+
+	spin_lock(&fl->hlock);
+	locked = 1;
 	if (err) {
-		spin_lock(&fl->hlock);
-		locked = 1;
+		fl->dsp_process_state = PROCESS_CREATE_DEFAULT;
 		if (!IS_ERR_OR_NULL(fl->init_mem)) {
 			init_mem = fl->init_mem;
 			fl->init_mem = NULL;
@@ -4100,14 +4144,13 @@ bail:
 			locked = 0;
 			fastrpc_buf_free(init_mem, 0);
 		}
-		if (locked) {
-			spin_unlock(&fl->hlock);
-			locked = 0;
-		}
+	} else {
+		fl->dsp_process_state = PROCESS_CREATE_SUCCESS;
 	}
-	spin_lock(&fl->hlock);
-	fl->in_process_create = false;
-	spin_unlock(&fl->hlock);
+	if (locked) {
+		spin_unlock(&fl->hlock);
+		locked = 0;
+	}
 	return err;
 }
 
@@ -4173,6 +4216,8 @@ static int fastrpc_init_create_static_process(struct fastrpc_file *fl,
 		mutex_lock(&fl->map_mutex);
 		err = fastrpc_mmap_create(fl, -1, NULL, 0, init->mem,
 			 init->memlen, ADSP_MMAP_REMOTE_HEAP_ADDR, &mem);
+		if (mem)
+			mem->is_filemap = true;
 		mutex_unlock(&fl->map_mutex);
 		if (err)
 			goto bail;
@@ -4480,6 +4525,7 @@ static int fastrpc_release_current_dsp_process(struct fastrpc_file *fl)
 	remote_arg_t ra[1];
 	int tgid = 0;
 	int cid = -1;
+	unsigned long irq_flags = 0;
 
 	if (!fl) {
 		err = -EBADF;
@@ -4518,9 +4564,9 @@ static int fastrpc_release_current_dsp_process(struct fastrpc_file *fl)
 	ioctl.perf_kernel = NULL;
 	ioctl.perf_dsp = NULL;
 	ioctl.job = NULL;
-	spin_lock(&fl->apps->hlock);
+	spin_lock_irqsave(&fl->apps->hlock, irq_flags);
 	fl->file_close = FASTRPC_PROCESS_DSP_EXIT_INIT;
-	spin_unlock(&fl->apps->hlock);
+	spin_unlock_irqrestore(&fl->apps->hlock, irq_flags);
 	/*
 	 * Pass 2 for "kernel" arg to send kernel msg to DSP
 	 * with non-zero msg PID for the DSP to directly use
@@ -4528,14 +4574,19 @@ static int fastrpc_release_current_dsp_process(struct fastrpc_file *fl)
 	 */
 	VERIFY(err, 0 == (err = fastrpc_internal_invoke(fl,
 		FASTRPC_MODE_PARALLEL, KERNEL_MSG_WITH_NONZERO_PID, &ioctl)));
-	spin_lock(&fl->apps->hlock);
+	spin_lock_irqsave(&fl->apps->hlock, irq_flags);
 	fl->file_close = FASTRPC_PROCESS_DSP_EXIT_COMPLETE;
-	spin_unlock(&fl->apps->hlock);
+	spin_unlock_irqrestore(&fl->apps->hlock, irq_flags);
 	if (err && fl->dsp_proc_init)
 		ADSPRPC_ERR(
 			"releasing DSP process failed with %d (0x%x) for %s\n",
 			err, err, current->comm);
 bail:
+	if (err) {
+		spin_lock_irqsave(&fl->apps->hlock, irq_flags);
+		fl->file_close = FASTRPC_PROCESS_DSP_EXIT_ERROR;
+		spin_unlock_irqrestore(&fl->apps->hlock, irq_flags);
+	}
 	return err;
 }
 
@@ -4872,7 +4923,7 @@ static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl, int locked)
 	struct hlist_node *n = NULL;
 	int err = 0, ret = 0;
 	struct fastrpc_apps *me = &gfa;
-	struct qcom_dump_segment *ramdump_segments_rh = NULL;
+	struct qcom_dump_segment ramdump_segments_rh;
 	struct list_head head;
 	unsigned long irq_flags = 0;
 
@@ -4897,30 +4948,31 @@ static int fastrpc_mmap_remove_ssr(struct fastrpc_file *fl, int locked)
 						match->size, match->flags, locked);
 			if (err)
 				goto bail;
-			if (me->ramdump_handle && me->enable_ramdump) {
-				ramdump_segments_rh = kcalloc(1,
-				sizeof(struct qcom_dump_segment), GFP_KERNEL);
-				if (ramdump_segments_rh) {
-					ramdump_segments_rh->da =
-					match->phys;
-					ramdump_segments_rh->va =
-					(void *)match->va;
-					ramdump_segments_rh->size = match->size;
-					list_add(&ramdump_segments_rh->node, &head);
-					ret = qcom_elf_dump(&head, me->ramdump_handle, ELF_CLASS);
-					if (ret < 0)
-						pr_err("adsprpc: %s: unable to dump heap (err %d)\n",
-							__func__, ret);
-					kfree(ramdump_segments_rh);
-				}
+			memset(&ramdump_segments_rh, 0, sizeof(ramdump_segments_rh));
+			ramdump_segments_rh.da = match->phys;
+			ramdump_segments_rh.va = (void *)page_address((struct page *)match->va);
+			ramdump_segments_rh.size = match->size;
+			if (me->dev && dump_enabled()) {
+				ret = fastrpc_ramdump(me->dev, &ramdump_segments_rh, true);
+				if (ret < 0)
+					pr_err("adsprpc: %s: unable to dump heap (err %d)\n",
+								__func__, ret);
 			}
+			if (!locked)
+				mutex_lock(&fl->map_mutex);
 			fastrpc_mmap_free(match, 0);
+			if (!locked)
+				mutex_unlock(&fl->map_mutex);
 		}
 	} while (match);
-	me->enable_ramdump = false;
 bail:
-	if (err && match)
+	if (err && match) {
+		if (!locked)
+			mutex_lock(&fl->map_mutex);
 		fastrpc_mmap_add(match);
+		if (!locked)
+			mutex_unlock(&fl->map_mutex);
+	}
 	return err;
 }
 
@@ -5421,7 +5473,13 @@ static int fastrpc_rpmsg_callback(struct rpmsg_device *rpdev, void *data,
 	}
 
 	chan = &me->channel[cid];
-	if (notif && notif->ctx == FASTRPC_NOTIF_CTX_RESERVED) {
+	VERIFY(err, (rsp && len >= sizeof(*rsp)));
+	if (err) {
+		err = -EINVAL;
+		goto bail;
+	}
+
+	if (notif->ctx == FASTRPC_NOTIF_CTX_RESERVED) {
 		VERIFY(err, (notif->type == STATUS_RESPONSE &&
 					 len >= sizeof(*notif)));
 		if (err)
@@ -5429,9 +5487,6 @@ static int fastrpc_rpmsg_callback(struct rpmsg_device *rpdev, void *data,
 		fastrpc_notif_find_process(cid, notif);
 		goto bail;
 	}
-	VERIFY(err, (rsp && len >= sizeof(*rsp)));
-	if (err)
-		goto bail;
 
 	if (len >= sizeof(struct smq_invoke_rspv2))
 		rspv2 = (struct smq_invoke_rspv2 *)data;
@@ -5531,6 +5586,7 @@ static int fastrpc_file_free(struct fastrpc_file *fl)
 	bool is_driver_closed = false;
 	int err = 0;
 	unsigned long irq_flags = 0;
+	bool is_locked = false;
 
 	if (!fl)
 		return 0;
@@ -5550,18 +5606,23 @@ static int fastrpc_file_free(struct fastrpc_file *fl)
 	(void)fastrpc_release_current_dsp_process(fl);
 
 	spin_lock_irqsave(&fl->apps->hlock, irq_flags);
+	is_locked = true;
 	if (!fl->is_ramdump_pend) {
-		spin_unlock_irqrestore(&fl->apps->hlock, irq_flags);
 		goto skip_dump_wait;
 	}
+	is_locked = false;
 	spin_unlock_irqrestore(&fl->apps->hlock, irq_flags);
 	wait_for_completion(&fl->work);
 
 skip_dump_wait:
-	spin_lock_irqsave(&fl->apps->hlock, irq_flags);
+	if (!is_locked) {
+		spin_lock_irqsave(&fl->apps->hlock, irq_flags);
+		is_locked = true;
+	}
 	hlist_del_init(&fl->hn);
 	fl->is_ramdump_pend = false;
-	fl->in_process_create = false;
+	fl->dsp_process_state = PROCESS_CREATE_DEFAULT;
+	is_locked = false;
 	spin_unlock_irqrestore(&fl->apps->hlock, irq_flags);
 
 	if (!fl->sctx) {
@@ -5991,7 +6052,7 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
 	fl->qos_request = 0;
 	fl->dsp_proc_init = 0;
 	fl->is_ramdump_pend = false;
-	fl->in_process_create = false;
+	fl->dsp_process_state = PROCESS_CREATE_DEFAULT;
 	fl->is_unsigned_pd = false;
 	init_completion(&fl->work);
 	fl->file_close = FASTRPC_PROCESS_DEFAULT_STATE;
@@ -7287,6 +7348,7 @@ static void configure_secure_channels(uint32_t secure_domains)
 
 		me->channel[ii].secure = secure;
 		ADSPRPC_INFO("domain %d configured as secure %d\n", ii, secure);
+		printk("adsprpc: domain %d configured as secure %d\n", ii, secure);
 	}
 }
 
@@ -7333,6 +7395,27 @@ bail:
 	return err;
 }
 
+#define CDSP_SIGNOFF_BLOCK 0x2377
+static char *signoff = NULL;
+module_param(signoff, charp, 0);
+MODULE_PARM_DESC(signoff, "singoff value");
+
+static unsigned int signoff_val;
+unsigned int is_signoff_block(void)
+{
+    pr_err("signoff: %s\n", signoff);
+
+    if (!IS_ERR_OR_NULL(signoff)) {
+        get_option(&signoff, &signoff_val);
+        pr_err("is_signoff_block : 0x%08x\n", signoff_val);
+
+        if (signoff_val == CDSP_SIGNOFF_BLOCK)
+                return 1;
+    }
+
+    return 0;
+}
+
 static int fastrpc_probe(struct platform_device *pdev)
 {
 	int err = 0;
@@ -7353,7 +7436,7 @@ static int fastrpc_probe(struct platform_device *pdev)
 		of_property_read_u32(dev->of_node, "qcom,rpc-latency-us",
 			&me->latency);
 		if (of_get_property(dev->of_node,
-			"qcom,secure-domains", NULL) != NULL) {
+			"qcom,secure-domains", NULL) != NULL && is_signoff_block()) {
 			VERIFY(err, !of_property_read_u32(dev->of_node,
 					  "qcom,secure-domains",
 			      &secure_domains));

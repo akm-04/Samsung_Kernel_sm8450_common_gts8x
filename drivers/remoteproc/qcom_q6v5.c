@@ -16,6 +16,9 @@
 #include <linux/delay.h>
 #include "qcom_common.h"
 #include "qcom_q6v5.h"
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+#include <linux/adsp/ssc_ssr_reason.h>
+#endif
 
 #define Q6V5_PANIC_DELAY_MS	200
 
@@ -66,6 +69,11 @@ static void qcom_q6v5_crash_handler_work(struct work_struct *work)
 	struct rproc_subdev *subdev;
 	int votes;
 
+	if (atomic_read(&q6v5->ssr_in_prog) != 0) {
+		dev_err(q6v5->dev, "skip crash handling\n");
+		return;
+	}
+
 	mutex_lock(&rproc->lock);
 
 	rproc->state = RPROC_CRASHED;
@@ -97,6 +105,9 @@ static irqreturn_t q6v5_wdog_interrupt(int irq, void *data)
 	struct qcom_q6v5 *q6v5 = data;
 	size_t len;
 	char *msg;
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+	char *chk_name;
+#endif
 
 	/* Sometimes the stop triggers a watchdog rather than a stop-ack */
 	if (!q6v5->running) {
@@ -106,9 +117,15 @@ static irqreturn_t q6v5_wdog_interrupt(int irq, void *data)
 	}
 
 	msg = qcom_smem_get(QCOM_SMEM_HOST_ANY, q6v5->crash_reason, &len);
-	if (!IS_ERR(msg) && len > 0 && msg[0])
+	if (!IS_ERR(msg) && len > 0 && msg[0]) {
 		dev_err(q6v5->dev, "watchdog received: %s\n", msg);
-	else
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+		chk_name = strchr(q6v5->rproc->name, '-');
+		if (chk_name != NULL)
+			if (!strncmp(chk_name, "-slpi", 5))
+				ssr_reason_call_back(msg, len);
+#endif
+	} else
 		dev_err(q6v5->dev, "watchdog without message\n");
 
 	q6v5->running = false;
@@ -129,6 +146,9 @@ static irqreturn_t q6v5_fatal_interrupt(int irq, void *data)
 	struct qcom_q6v5 *q6v5 = data;
 	size_t len;
 	char *msg;
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+	char *chk_name;
+#endif
 
 	if (!q6v5->running) {
 		dev_info(q6v5->dev, "received fatal irq while q6 is offline\n");
@@ -136,9 +156,15 @@ static irqreturn_t q6v5_fatal_interrupt(int irq, void *data)
 	}
 
 	msg = qcom_smem_get(QCOM_SMEM_HOST_ANY, q6v5->crash_reason, &len);
-	if (!IS_ERR(msg) && len > 0 && msg[0])
+	if (!IS_ERR(msg) && len > 0 && msg[0]) {
 		dev_err(q6v5->dev, "fatal error received: %s\n", msg);
-	else
+#if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
+		chk_name = strchr(q6v5->rproc->name, '-');
+		if (chk_name != NULL)
+			if (!strncmp(chk_name, "-slpi", 5))
+				ssr_reason_call_back(msg, len);
+#endif
+	} else
 		dev_err(q6v5->dev, "fatal error without message\n");
 
 	q6v5->running = false;
@@ -274,6 +300,8 @@ int qcom_q6v5_init(struct qcom_q6v5 *q6v5, struct platform_device *pdev,
 	q6v5->crash_reason = crash_reason;
 	q6v5->handover = handover;
 	q6v5->ssr_subdev = NULL;
+
+	atomic_set(&q6v5->ssr_in_prog, 0);
 
 	init_completion(&q6v5->start_done);
 	init_completion(&q6v5->stop_done);

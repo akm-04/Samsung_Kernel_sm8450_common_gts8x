@@ -714,6 +714,16 @@ config QMP_DEBUGFS_CLIENT
 	  into an exposed debugfs node to send to AOP. The driver expects the
 	  passed in string argument to be formatted correctly for AOP to read.
 
+config QMP_SYSFS_CLIENT
+	tristate "Sysfs client to communicate with AOP using QMP protocol"
+	depends on ARCH_QCOM && ARM64
+	default m
+	help
+	  This options enables a driver which allows clients to send messages
+	  to Alway On processor using QMP transport. Users can echo a message
+	  into an exposed debugfs node to send to AOP. The driver expects the
+	  passed in string argument to be formatted correctly for AOP to read.
+
 config QSEE_IPC_IRQ_BRIDGE
 	tristate "QSEE IPC Interrupt Bridge"
 	help
@@ -872,6 +882,19 @@ config QTI_PLH_SCMI_CLIENT
 	  This driver deliver the PLH vendor protocol handle to interface
 	  driver, and interface driver will use this handle to communicate
 	  with RIMPS PLH.
+
+config QTI_GPLAF_SCMI_CLIENT
+	tristate "Qualcomm Technologies Inc. SCMI client driver for GPLAF"
+	depends on MSM_PERFORMANCE && QTI_SCMI_GPLAF_PROTOCOL
+	default n
+	help
+	  SCMI client driver registers itself with SCMI framework for GPLAF
+	  vendor protocol, and also registers with the gplaf interface driver
+	  msm_performance.
+
+	  This driver deliver the GPLAF vendor protocol handle to interface
+	  driver, and interface driver will use this handle to communicate
+	  with RIMPS GPLAF.
 
 config QCOM_SUBSYSTEM_SLEEP_STATS
 	tristate "Qualcomm Technologies, Inc. Subsystem sleep stats driver"
@@ -1218,6 +1241,27 @@ config QTI_OEMVM_CORE_CTL
 	  mapping information is recorded when OEMVM bootup. The driver provides
 	  API for user to migrate vCPU to current pCPU then yield on current
 	  pCPU. User can also recover vCPU mapping after work is done.
+
+config QCOM_VM_DMESG_DUMPER
+	tristate "Dump a VM's dmesg to a physical address upon panic"
+	depends on GH_RM_DRV && QCOM_SECURE_BUFFER
+	help
+	  Upon encountering a kernel panic in a Virtual machine, enable the
+	  dumping the dmesg log buffer to a reserved memory section through the
+	  use of a Gunyah shared-memory doorbell object. This driver is to be
+	  enabled on both Primary VM and the secondary VM whose dmesg is
+	  desired.
+
+config SEC_CDSP_NO_CRASH_FOR_ENG
+	bool "crash trigger for USER/USERDEBUG only"
+	default n
+	help
+	  This option protects crash for the ENG Binary.	
+
+config SUPPORT_SSC_SPU
+	bool "Support SSC(SLPI) SPU(System Parameter update)"
+	help
+	  Add support for SSC SPU.
 
 source "drivers/soc/qcom/icnss2/Kconfig"
 source "drivers/soc/qcom/sync_fence/Kconfig"

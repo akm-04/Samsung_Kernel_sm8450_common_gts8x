@@ -190,6 +190,7 @@ enum adreno_gpurev {
 	ADRENO_REV_A618 = 618,
 	ADRENO_REV_A619 = 619,
 	ADRENO_REV_A620 = 620,
+	ADRENO_REV_A621 = 621,
 	ADRENO_REV_A630 = 630,
 	ADRENO_REV_A635 = 635,
 	ADRENO_REV_A640 = 640,
@@ -1052,7 +1053,7 @@ ADRENO_TARGET(a610, ADRENO_REV_A610)
 ADRENO_TARGET(a612, ADRENO_REV_A612)
 ADRENO_TARGET(a618, ADRENO_REV_A618)
 ADRENO_TARGET(a619, ADRENO_REV_A619)
-ADRENO_TARGET(a620, ADRENO_REV_A620)
+ADRENO_TARGET(a621, ADRENO_REV_A621)
 ADRENO_TARGET(a630, ADRENO_REV_A630)
 ADRENO_TARGET(a635, ADRENO_REV_A635)
 ADRENO_TARGET(a662, ADRENO_REV_A662)
@@ -1095,7 +1096,7 @@ static inline int adreno_is_a640_family(struct adreno_device *adreno_dev)
 /*
  * Derived GPUs from A650 needs to be added to this list.
  * A650 is derived from A640 but register specs has been
- * changed hence do not belongs to A640 family. A620,
+ * changed hence do not belongs to A640 family. A620, A621,
  * A660, A690 follows the register specs of A650.
  *
  */
@@ -1105,7 +1106,7 @@ static inline int adreno_is_a650_family(struct adreno_device *adreno_dev)
 
 	return (rev == ADRENO_REV_A650 || rev == ADRENO_REV_A620 ||
 		rev == ADRENO_REV_A660 || rev == ADRENO_REV_A635 ||
-		rev == ADRENO_REV_A662);
+		rev == ADRENO_REV_A662 ||  rev == ADRENO_REV_A621);
 }
 
 static inline int adreno_is_a619_holi(struct adreno_device *adreno_dev)
@@ -1114,10 +1115,11 @@ static inline int adreno_is_a619_holi(struct adreno_device *adreno_dev)
 		"qcom,adreno-gpu-a619-holi");
 }
 
-static inline int adreno_is_a620v1(struct adreno_device *adreno_dev)
+static inline int adreno_is_a620(struct adreno_device *adreno_dev)
 {
-	return (ADRENO_GPUREV(adreno_dev) == ADRENO_REV_A620) &&
-		(ADRENO_CHIPID_PATCH(adreno_dev->chipid) == 0);
+	unsigned int rev = ADRENO_GPUREV(adreno_dev);
+
+	return (rev == ADRENO_REV_A620 || rev == ADRENO_REV_A621);
 }
 
 static inline int adreno_is_a640v2(struct adreno_device *adreno_dev)
@@ -1134,6 +1136,7 @@ static inline int adreno_is_gen7(struct adreno_device *adreno_dev)
 
 ADRENO_TARGET(gen7_0_0, ADRENO_REV_GEN7_0_0)
 ADRENO_TARGET(gen7_0_1, ADRENO_REV_GEN7_0_1)
+ADRENO_TARGET(gen7_4_0, ADRENO_REV_GEN7_4_0)
 
 /*
  * adreno_checkreg_off() - Checks the validity of a register enum
@@ -1771,19 +1774,6 @@ static inline int adreno_allocate_global(struct kgsl_device *device,
 	*memdesc = kgsl_allocate_global(device, size, padding, flags, priv, name);
 	return PTR_ERR_OR_ZERO(*memdesc);
 }
-
-/**
- * adreno_regulator_disable_poll - Disable the regulator and wait for it to
- * complete
- * @device: A GPU device handle
- * @reg: Pointer to the regulator to disable
- * @offset: Offset of the register to poll for success
- * @timeout: Timeout (in milliseconds)
- *
- * Return: true if the regulator got disabled or false on timeout
- */
-bool adreno_regulator_disable_poll(struct kgsl_device *device,
-		struct regulator *reg, u32 offset, u32 timeout);
 
 static inline void adreno_set_dispatch_ops(struct adreno_device *adreno_dev,
 		const struct adreno_dispatch_ops *ops)

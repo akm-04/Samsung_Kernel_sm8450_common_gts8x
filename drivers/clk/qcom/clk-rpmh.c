@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/clk-provider.h>
@@ -10,6 +11,7 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
+#include <linux/clk.h>
 #include <soc/qcom/cmd-db.h>
 #include <soc/qcom/rpmh.h>
 #include <soc/qcom/tcs.h>
@@ -595,6 +597,18 @@ static const struct clk_rpmh_desc clk_rpmh_diwali = {
 	.num_clks = ARRAY_SIZE(diwali_rpmh_clocks),
 };
 
+DEFINE_CLK_RPMH_ARC(neo, bi_tcxo, bi_tcxo_ao, "xo.lvl", 0x3, 1);
+
+static struct clk_hw *neo_rpmh_clocks[] = {
+	[RPMH_CXO_CLK]          = &neo_bi_tcxo.hw,
+	[RPMH_CXO_CLK_A]        = &neo_bi_tcxo_ao.hw,
+};
+
+static const struct clk_rpmh_desc clk_rpmh_neo = {
+	.clks = neo_rpmh_clocks,
+	.num_clks = ARRAY_SIZE(neo_rpmh_clocks),
+};
+
 DEFINE_CLK_RPMH_ARC(sdxlemur, bi_tcxo, bi_tcxo_ao, "xo.lvl", 0x3, 4);
 DEFINE_CLK_RPMH_VRM(sdxlemur, ln_bb_clk1, ln_bb_clk1_ao, "lnbclka1", 4);
 DEFINE_CLK_RPMH_BCM(sdxlemur, qpic_clk, "QP0");
@@ -621,6 +635,29 @@ static const struct clk_rpmh_desc clk_rpmh_sdxlemur = {
 	.num_clks = ARRAY_SIZE(sdxlemur_rpmh_clocks),
 };
 
+DEFINE_CLK_RPMH_VRM(parrot, ln_bb_clk3, ln_bb_clk3_ao, "lnbclka3", 2);
+
+static struct clk_hw *parrot_rpmh_clocks[] = {
+	[RPMH_CXO_CLK]		= &waipio_bi_tcxo.hw,
+	[RPMH_CXO_CLK_A]	= &waipio_bi_tcxo_ao.hw,
+	[RPMH_LN_BB_CLK2]	= &waipio_ln_bb_clk2.hw,
+	[RPMH_LN_BB_CLK2_A]	= &waipio_ln_bb_clk2_ao.hw,
+	[RPMH_LN_BB_CLK3]	= &parrot_ln_bb_clk3.hw,
+	[RPMH_LN_BB_CLK3_A]	= &parrot_ln_bb_clk3_ao.hw,
+	[RPMH_RF_CLK1]		= &lahaina_rf_clk1.hw,
+	[RPMH_RF_CLK1_A]	= &lahaina_rf_clk1_ao.hw,
+	[RPMH_RF_CLK2]		= &lahaina_rf_clk2.hw,
+	[RPMH_RF_CLK2_A]	= &lahaina_rf_clk2_ao.hw,
+	[RPMH_RF_CLK5]		= &waipio_rf_clk5.hw,
+	[RPMH_RF_CLK5_A]	= &waipio_rf_clk5_ao.hw,
+	[RPMH_IPA_CLK]		= &lahaina_ipa.hw,
+};
+
+static const struct clk_rpmh_desc clk_rpmh_parrot = {
+	.clks = parrot_rpmh_clocks,
+	.num_clks = ARRAY_SIZE(parrot_rpmh_clocks),
+};
+
 static struct clk_hw *of_clk_rpmh_hw_get(struct of_phandle_args *clkspec,
 					 void *data)
 {
@@ -642,6 +679,36 @@ static struct clk_hw *of_clk_rpmh_hw_get(struct of_phandle_args *clkspec,
 
 	return rpmh->clks[idx];
 }
+
+static ssize_t show_xo_vote(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	return 0;
+}
+
+static ssize_t store_xo_vote(struct device *dev,
+			     struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	const struct clk_rpmh_desc *desc;
+	struct clk *clk;
+	int ret;
+
+	desc = of_device_get_match_data(dev);
+	if (!desc) {
+		pr_err("%s: no match data\n", __func__);
+		return 0;
+	}
+
+	pr_err("%s: voting for bi_tcxo\n", __func__);
+
+	clk = desc->clks[RPMH_CXO_CLK]->clk;
+	ret = clk_prepare_enable(clk);
+
+	return !ret ? count : ret;
+}
+
+static DEVICE_ATTR(xo_vote, 0644, show_xo_vote, store_xo_vote);
 
 static int clk_rpmh_probe(struct platform_device *pdev)
 {
@@ -707,6 +774,8 @@ static int clk_rpmh_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	device_create_file(&pdev->dev, &dev_attr_xo_vote);
+
 	dev_dbg(&pdev->dev, "Registered RPMh clocks\n");
 
 	return 0;
@@ -723,6 +792,8 @@ static const struct of_device_id clk_rpmh_match_table[] = {
 	{ .compatible = "qcom,waipio-rpmh-clk", .data = &clk_rpmh_waipio},
 	{ .compatible = "qcom,sdxlemur-rpmh-clk", .data = &clk_rpmh_sdxlemur},
 	{ .compatible = "qcom,diwali-rpmh-clk", .data = &clk_rpmh_diwali},
+	{ .compatible = "qcom,neo-rpmh-clk", .data = &clk_rpmh_neo},
+	{ .compatible = "qcom,parrot-rpmh-clk", .data = &clk_rpmh_parrot},
 	{ }
 };
 MODULE_DEVICE_TABLE(of, clk_rpmh_match_table);

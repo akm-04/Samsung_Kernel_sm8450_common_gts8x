@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -556,6 +556,29 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+extern int ant_from_macloader;
+
+#define SS_SOC_ID_GF_MASK 0x11
+static bool cnss_use_xPA(struct cnss_plat_data *plat_priv)
+{
+	int xpa=0;
+	of_property_read_u32(plat_priv->plat_dev->dev.of_node,
+	"qcom,use-xPA",&xpa);
+	pr_err("cnss: bool cnss_use_xPA: xpa = %d \n", xpa);
+	return (xpa == 0xff);
+}
+
+static bool cnss_use_xLNA_bypass(struct cnss_plat_data *plat_priv)
+{
+	int xlna=0;
+	of_property_read_u32(plat_priv->plat_dev->dev.of_node,
+	"qcom,use-xLNA",&xlna);
+	pr_err("cnss: bool cnss_use_xLNA_bypass: xlna = %d \n", xlna);
+	return (xlna == 0xff);
+}
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
+
 static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 				  u32 bdf_type, char *filename,
 				  u32 filename_len)
@@ -563,17 +586,55 @@ static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 	char filename_tmp[MAX_FIRMWARE_NAME_LEN];
 	int ret = 0;
 
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	cnss_pr_err("ant_from_macloader %d\n",ant_from_macloader);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 	switch (bdf_type) {
 	case CNSS_BDF_ELF:
 		/* Board ID will be equal or less than 0xFF in GF mask case */
 		if (plat_priv->board_info.board_id == 0xFF) {
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+			if (ant_from_macloader == 1 || ant_from_macloader == 2 || ant_from_macloader == 10) { // 10: for GTX disabled bdf
+				if ((plat_priv->soc_info.soc_id & SS_SOC_ID_GF_MASK) == SS_SOC_ID_GF_MASK)
+					snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME_GF "%d",
+						 ant_from_macloader);
+				else
+					snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME "%d",
+						 ant_from_macloader);
+			} else {
+				if ((plat_priv->soc_info.soc_id & SS_SOC_ID_GF_MASK) == SS_SOC_ID_GF_MASK)
+					snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME_GF);
+				else
+					snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME);
+			}
+
+			if (cnss_use_xPA(plat_priv))
+				strncat(filename_tmp, ".xPA", 4);
+			else if (cnss_use_xLNA_bypass(plat_priv))
+				strncat(filename_tmp, ".dbm", 4);
+#else /* !CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 			if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK)
 				snprintf(filename_tmp, filename_len,
 					 ELF_BDF_FILE_NAME_GF);
 			else
 				snprintf(filename_tmp, filename_len,
 					 ELF_BDF_FILE_NAME);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 		} else if (plat_priv->board_info.board_id < 0xFF) {
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+			if (ant_from_macloader == 1 || ant_from_macloader == 2 || ant_from_macloader == 10) { // 10: for GTX disabled bdf
+				snprintf(filename_tmp, filename_len,
+					 ELF_BDF_FILE_NAME_PREFIX "%02x%d",
+					 plat_priv->board_info.board_id, ant_from_macloader);
+			} else
+				snprintf(filename_tmp, filename_len,
+					 ELF_BDF_FILE_NAME_PREFIX "%02x",
+					 plat_priv->board_info.board_id);
+			if (cnss_use_xPA(plat_priv))
+				strncat(filename_tmp, ".xPA", 4);
+			else if (cnss_use_xLNA_bypass(plat_priv))
+				strncat(filename_tmp, ".dbm", 4);
+#else /* !CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 			if (plat_priv->chip_info.chip_id & CHIP_ID_GF_MASK)
 				snprintf(filename_tmp, filename_len,
 					 ELF_BDF_FILE_NAME_GF_PREFIX "%02x",
@@ -582,6 +643,7 @@ static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 				snprintf(filename_tmp, filename_len,
 					 ELF_BDF_FILE_NAME_PREFIX "%02x",
 					 plat_priv->board_info.board_id);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 		} else {
 			snprintf(filename_tmp, filename_len,
 				 BDF_FILE_NAME_PREFIX "%02x.e%02x",
@@ -951,7 +1013,7 @@ int cnss_wlfw_qdss_data_send_sync(struct cnss_plat_data *plat_priv, char *file_n
 			goto fail;
 		}
 
-		ret = qmi_txn_wait(&txn, plat_priv->ctrl_params.qmi_timeout);
+		ret = qmi_txn_wait(&txn, QMI_WLFW_TIMEOUT_JF);
 
 		if (ret < 0) {
 			cnss_pr_err("QDSS trace resp wait failed with rc %d\n",
@@ -1118,7 +1180,7 @@ int cnss_wlfw_qdss_dnld_send_sync(struct cnss_plat_data *plat_priv)
 			goto err_send;
 		}
 
-		ret = qmi_txn_wait(&txn, plat_priv->ctrl_params.qmi_timeout);
+		ret = qmi_txn_wait(&txn, QMI_WLFW_TIMEOUT_JF);
 		if (ret < 0) {
 			cnss_pr_err("Failed to wait for response of QDSS download request, err: %d\n",
 				    ret);
@@ -1208,7 +1270,7 @@ static int wlfw_send_qdss_trace_mode_req
 		goto out;
 	}
 
-	rc = qmi_txn_wait(&txn, plat_priv->ctrl_params.qmi_timeout);
+	rc = qmi_txn_wait(&txn, QMI_WLFW_TIMEOUT_JF);
 	if (rc < 0) {
 		cnss_pr_err("QDSS Mode resp wait failed with rc %d\n",
 			    rc);
@@ -2974,8 +3036,10 @@ int cnss_qmi_get_dms_mac(struct cnss_plat_data *plat_priv)
 	}
 
 	if (resp.resp.result != QMI_RESULT_SUCCESS_V01) {
+#if 0 /* CN05119154 - blocked for removing build warning */
 		cnss_pr_err("QMI_DMS_GET_MAC_ADDRESS_REQ_V01 failed, result: %d, err: %d\n",
 			    resp.resp.result, resp.resp.error);
+#endif /* CN05119154 - blocked for removing build warning */
 		ret = -resp.resp.result;
 		goto out;
 	}

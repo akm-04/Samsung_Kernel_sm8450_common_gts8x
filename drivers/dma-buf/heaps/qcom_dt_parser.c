@@ -9,6 +9,7 @@
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
 #include <linux/of_reserved_mem.h>
+#include <linux/memblock.h>
 
 #include <linux/qcom_dma_heap.h>
 #include "qcom_dt_parser.h"
@@ -64,6 +65,13 @@ void free_pdata(const struct platform_data *pdata)
 	kfree(pdata);
 }
 
+#if defined(CONFIG_RBIN)
+static bool under_8GB_device(void)
+{
+	return memblock_end_of_DRAM() <= 0x980000000 ? true : false;
+}
+#endif
+
 static int heap_dt_init(struct device_node *mem_node,
 			struct platform_heap *heap)
 {
@@ -112,6 +120,18 @@ static int heap_dt_init(struct device_node *mem_node,
 		}
 	}
 	heap->is_nomap =  of_property_read_bool(mem_node, "no-map");
+
+#if defined(CONFIG_RBIN)
+	if (strncmp(rmem->name, "rbin", 4) == 0) {
+		if (!heap->base && !heap->size && rmem->base && rmem->size) {
+			heap->base = rmem->base;
+			heap->size = rmem->size;
+		}
+
+		if (!under_8GB_device())
+			heap->type = HEAP_TYPE_CARVEOUT;
+	}
+#endif
 
 	return ret;
 }

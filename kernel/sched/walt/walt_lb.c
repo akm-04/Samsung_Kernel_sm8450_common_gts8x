@@ -254,6 +254,11 @@ static inline bool _walt_can_migrate_task(struct task_struct *p, int dst_cpu,
 			return false;
 	}
 
+#if IS_ENABLED(CONFIG_PERF_RESERVE)
+	if (is_task_prio_need_low_cpu(p) && !is_min_capacity_cpu(dst_cpu))
+		return false;
+#endif
+
 	return true;
 }
 

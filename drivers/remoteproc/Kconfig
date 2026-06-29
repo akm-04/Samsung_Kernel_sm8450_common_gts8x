@@ -399,6 +399,14 @@ config TI_K3_R5_REMOTEPROC
 	  It's safe to say N here if you're not interested in utilizing
 	  a slave processor.
 
+config SEC_SENSORS_SSC
+	bool "Enable Sensors Driver Support SEC features for SSC"
+	depends on ADSP_FACTORY
+	help
+	  Say y here to enable SEC features for Snapdragon Sensor Core(SSC)
+	  support SEC features for Qualcomm Technologies, Inc SoCs. SSC is used for
+	  exercising sensor use-cases.
+	  Say N if you do not want to support it.
 endif # REMOTEPROC
 
 endmenu

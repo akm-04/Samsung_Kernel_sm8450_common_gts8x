@@ -656,6 +656,7 @@ static int entry_ffs_func_bind(struct kretprobe_instance *ri,
 	if (!ffs)
 		return -ENODEV;
 
+
 	context = get_ipc_context(ffs);
 	data->x0 = ffs;
 	kprobe_log(context, ri->rp->kp.symbol_name, "enter");

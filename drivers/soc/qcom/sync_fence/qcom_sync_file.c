@@ -200,6 +200,11 @@ static int spec_sync_create_array(struct fence_create_data *f)
 
 	fence_array = dma_fence_array_create(f->num_fences, NULL,
 				dma_fence_context_alloc(1), 0, signal_any);
+	if (!fence_array) {
+		pr_err("dma fence_array allocation failure\n");
+		ret = -ENOMEM;
+		goto error_args;
+	}
 
 	/* Set the enable signal such that signalling is not done during wait*/
 	set_bit(DMA_FENCE_FLAG_ENABLE_SIGNAL_BIT, &fence_array->base.flags);
@@ -229,6 +234,7 @@ static int spec_sync_create_array(struct fence_create_data *f)
 	return fd;
 
 err:
+	fence_array->num_fences = 0;
 	dma_fence_put(&fence_array->base);
 error_args:
 	put_unused_fd(fd);
@@ -319,7 +325,7 @@ static int spec_sync_bind_array(struct fence_bind_data *sync_bind_info)
 		}
 		fence_array->fences[i] = user_fence;
 		pr_debug("spec fd:%d i:%d bind fd:%d error:%d\n", sync_bind_info->out_bind_fd,
-			 i, user_fds[i], fence_array->fences[i]->error);
+			i, user_fds[i], fence_array->fences[i]->error);
 	}
 
 	set_bit(SPEC_FENCE_FLAG_ARRAY_BIND, &fence->flags);

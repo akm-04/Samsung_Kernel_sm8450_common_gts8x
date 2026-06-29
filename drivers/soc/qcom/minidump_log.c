@@ -1151,6 +1151,7 @@ static void md_register_panic_data(void)
 }
 #endif
 
+#ifdef CONFIG_QCOM_MINIDUMP_PANIC_DUMP
 static int print_module(const char *name, void *mod_addr, void *data)
 {
 	if (!md_mod_info_seq_buf) {
@@ -1206,6 +1207,9 @@ static void md_register_module_data(void)
 
 	android_debug_for_each_module(print_module, NULL);
 }
+#else /* CONFIG_QCOM_MINIDUMP_PANIC_DUMP */
+static void md_register_module_data(void) {}
+#endif
 
 #ifdef CONFIG_QCOM_MINIDUMP_PSTORE
 static void register_pstore_info(void)

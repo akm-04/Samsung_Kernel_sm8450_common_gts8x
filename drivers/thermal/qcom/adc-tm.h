@@ -106,6 +106,9 @@ struct adc_tm_sensor {
 	int				last_temp;
 	struct workqueue_struct		*req_wq;
 	struct work_struct		work;
+#if IS_ENABLED(CONFIG_SEC_EXT_THERMAL_MONITOR)
+	bool			ext_tm;
+#endif
 };
 
 struct adc_tm_client_info {
@@ -316,5 +319,10 @@ int32_t adc_tm_write_reg(struct adc_tm_chip *chip,
 					int16_t reg, u8 *data, int len);
 
 int adc_tm_is_valid(struct adc_tm_chip *chip);
+
+#if IS_ENABLED(CONFIG_SEC_EXT_THERMAL_MONITOR)
+int sec_convert_adc_to_temp(unsigned int adc_ch, int temp_adc);
+int sec_get_thr_voltage(unsigned int adc_ch, int temp);
+#endif /* CONFIG_SEC_EXT_THERMAL_MONITOR */
 
 #endif /* __QCOM_ADC_TM_H__ */

@@ -229,7 +229,6 @@ static int pwr_state;
 static struct class *bt_class;
 static int bt_major;
 static int soc_id;
-static bool probe_finished;
 
 #ifdef CONFIG_MSM_BT_OOBS
 static void btpower_uart_transport_locked(struct btpower_platform_data *drvdata,
@@ -1093,11 +1092,13 @@ static int bt_power_probe(struct platform_device *pdev)
 
 	btpower_aop_mbox_init(bt_power_pdata);
 
-	probe_finished = true;
+	pr_err("%s: BT_power_probe success\n", __func__);
+
 	return 0;
 
 free_pdata:
 	kfree(bt_power_pdata);
+	bt_power_pdata = NULL;
 	return ret;
 }
 
@@ -1105,7 +1106,6 @@ static int bt_power_remove(struct platform_device *pdev)
 {
 	dev_dbg(&pdev->dev, "%s\n", __func__);
 
-	probe_finished = false;
 	btpower_rfkill_remove(pdev);
 	bt_power_vreg_put();
 
@@ -1180,9 +1180,10 @@ static long bt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 #ifdef CONFIG_MSM_BT_OOBS
 	enum btpower_obs_param clk_cntrl;
 #endif
-	if (!bt_power_pdata || !probe_finished) {
-		pr_err("%s: BTPower Probing Pending.Try Again\n", __func__);
-		return -EAGAIN;
+	if(!bt_power_pdata){
+		pr_err("Bt_power not probed");
+		ret = -EINVAL;
+		return ret;
 	}
 
 	switch (cmd) {
@@ -1246,6 +1247,7 @@ static long bt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		pwr_cntrl = (int)arg;
 		pr_warn("%s: BT_CMD_PWR_CTRL pwr_cntrl: %d\n",
 			__func__, pwr_cntrl);
+
 		if (pwr_state != pwr_cntrl) {
 			ret = bluetooth_power(pwr_cntrl);
 			if (!ret)
@@ -1346,7 +1348,6 @@ static int __init btpower_init(void)
 {
 	int ret = 0;
 
-	probe_finished = false;
 	ret = platform_driver_register(&bt_power_driver);
 	if (ret) {
 		pr_err("%s: platform_driver_register error: %d\n",

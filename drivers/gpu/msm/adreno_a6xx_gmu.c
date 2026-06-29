@@ -5,6 +5,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/clk/qcom.h>
 #include <linux/component.h>
 #include <linux/delay.h>
 #include <linux/dma-map-ops.h>
@@ -477,6 +478,37 @@ static void gmu_ao_sync_event(struct adreno_device *adreno_dev)
 	local_irq_restore(flags);
 }
 
+int a6xx_gmu_enable_gdsc(struct adreno_device *adreno_dev)
+{
+	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
+	struct a6xx_gmu_device *gmu = to_a6xx_gmu(adreno_dev);
+	int ret;
+
+	ret = wait_for_completion_timeout(&gmu->gdsc_gate, msecs_to_jiffies(5000));
+	if (!ret) {
+		dev_err(device->dev, "GPU CX wait timeout. Dumping CX votes:\n");
+		/* Dump the cx regulator consumer list */
+		qcom_clk_dump(NULL, gmu->cx_gdsc, false);
+	}
+
+	ret = regulator_enable(gmu->cx_gdsc);
+	if (ret)
+		dev_err(&gmu->pdev->dev,
+			"Failed to enable GMU CX gdsc, error %d\n", ret);
+			
+	clear_bit(GMU_PRIV_CX_GDSC_WAIT, &gmu->flags);
+	return ret;
+}
+
+void a6xx_gmu_disable_gdsc(struct adreno_device *adreno_dev)
+{
+	struct a6xx_gmu_device *gmu = to_a6xx_gmu(adreno_dev);
+
+	reinit_completion(&gmu->gdsc_gate);
+	set_bit(GMU_PRIV_CX_GDSC_WAIT, &gmu->flags);
+	regulator_disable(gmu->cx_gdsc);
+}
+
 int a6xx_gmu_device_start(struct adreno_device *adreno_dev)
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
@@ -545,7 +577,7 @@ int a6xx_rscc_wakeup_sequence(struct adreno_device *adreno_dev)
 	if (!test_bit(GMU_PRIV_RSCC_SLEEP_DONE, &gmu->flags))
 		return 0;
 	 /* A660 has a replacement register */
-	if (adreno_is_a662(ADRENO_DEVICE(device)))
+	if (adreno_is_a662(adreno_dev) || adreno_is_a621(adreno_dev))
 		gmu_core_regread(device, A662_GPU_CC_GX_DOMAIN_MISC3, &val);
 	else if (adreno_is_a660(ADRENO_DEVICE(device)))
 		gmu_core_regread(device, A6XX_GPU_CC_GX_DOMAIN_MISC3, &val);
@@ -1834,7 +1866,7 @@ void a6xx_gmu_suspend(struct adreno_device *adreno_dev)
 	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_CX_GDSC))
 		regulator_set_mode(gmu->cx_gdsc, REGULATOR_MODE_IDLE);
 
-	a6xx_cx_regulator_disable_wait(gmu->cx_gdsc, device, 5000);
+	a6xx_gmu_disable_gdsc(adreno_dev);
 
 	if (ADRENO_QUIRK(adreno_dev, ADRENO_QUIRK_CX_GDSC))
 		regulator_set_mode(gmu->cx_gdsc, REGULATOR_MODE_NORMAL);
@@ -2164,19 +2196,6 @@ void a6xx_gmu_aop_send_acd_state(struct a6xx_gmu_device *gmu, bool flag)
 			"AOP mbox send message failed: %d\n", ret);
 }
 
-int a6xx_gmu_enable_gdsc(struct adreno_device *adreno_dev)
-{
-	struct a6xx_gmu_device *gmu = to_a6xx_gmu(adreno_dev);
-	int ret;
-
-	ret = regulator_enable(gmu->cx_gdsc);
-	if (ret)
-		dev_err(&gmu->pdev->dev,
-			"Failed to enable GMU CX gdsc, error %d\n", ret);
-
-	return ret;
-}
-
 int a6xx_gmu_enable_clks(struct adreno_device *adreno_dev)
 {
 	struct a6xx_gmu_device *gmu = to_a6xx_gmu(adreno_dev);
@@ -2305,8 +2324,7 @@ clks_gdsc_off:
 	clk_bulk_disable_unprepare(gmu->num_clks, gmu->clks);
 
 gdsc_off:
-	/* Poll to make sure that the CX is off */
-	a6xx_cx_regulator_disable_wait(gmu->cx_gdsc, device, 5000);
+	a6xx_gmu_disable_gdsc(adreno_dev);
 
 	a6xx_rdpm_cx_freq_update(gmu, 0);
 
@@ -2328,6 +2346,13 @@ static int a6xx_gmu_boot(struct adreno_device *adreno_dev)
 	ret = a6xx_gmu_enable_clks(adreno_dev);
 	if (ret)
 		goto gdsc_off;
+
+	/*
+	 * TLB operations are skipped during slumber. Incase CX doesn't
+	 * go down, it can result in incorrect translations due to stale
+	 * TLB entries. Flush TLB before boot up to ensure fresh start.
+	 */
+	kgsl_mmu_flush_tlb(&device->mmu);
 
 	ret = a6xx_rscc_wakeup_sequence(adreno_dev);
 	if (ret)
@@ -2385,8 +2410,7 @@ clks_gdsc_off:
 	clk_bulk_disable_unprepare(gmu->num_clks, gmu->clks);
 
 gdsc_off:
-	/* Poll to make sure that the CX is off */
-	a6xx_cx_regulator_disable_wait(gmu->cx_gdsc, device, 5000);
+	a6xx_gmu_disable_gdsc(adreno_dev);
 
 	a6xx_rdpm_cx_freq_update(gmu, 0);
 
@@ -2573,9 +2597,37 @@ static void a6xx_gmu_rdpm_probe(struct a6xx_gmu_device *gmu,
 				res->start, resource_size(res));
 }
 
+static int gmu_cx_gdsc_event(struct notifier_block *nb,
+	unsigned long event, void *data)
+{
+	struct a6xx_gmu_device *gmu = container_of(nb, struct a6xx_gmu_device, gdsc_nb);
+	struct adreno_device *adreno_dev = a6xx_gmu_to_adreno(gmu);
+	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
+	u32 val, offset;
+
+	if (!(event & REGULATOR_EVENT_DISABLE) || 
+		!test_bit(GMU_PRIV_CX_GDSC_WAIT, &gmu->flags))
+		return 0;
+
+	offset = (adreno_is_a662(ADRENO_DEVICE(device)) ||
+		adreno_is_a621(ADRENO_DEVICE(device))) ?
+		A662_GPU_CC_CX_GDSCR : A6XX_GPU_CC_CX_GDSCR;
+
+	if (kgsl_regmap_read_poll_timeout(&device->regmap, offset, val,
+		!(val & BIT(31)), 100, 100 * 1000))
+		dev_err(device->dev, "GPU CX wait timeout.\n");
+
+	clear_bit(GMU_PRIV_CX_GDSC_WAIT, &gmu->flags);
+	complete_all(&gmu->gdsc_gate);
+
+	return 0;
+}
+
 static int a6xx_gmu_regulators_probe(struct a6xx_gmu_device *gmu,
 		struct platform_device *pdev)
 {
+	int ret;
+	
 	gmu->cx_gdsc = devm_regulator_get(&pdev->dev, "vddcx");
 	if (IS_ERR(gmu->cx_gdsc)) {
 		if (PTR_ERR(gmu->cx_gdsc) != -EPROBE_DEFER)
@@ -2589,6 +2641,17 @@ static int a6xx_gmu_regulators_probe(struct a6xx_gmu_device *gmu,
 			dev_err(&pdev->dev, "Couldn't get the vdd gdsc\n");
 		return PTR_ERR(gmu->gx_gdsc);
 	}
+
+	gmu->gdsc_nb.notifier_call = gmu_cx_gdsc_event;
+	ret = devm_regulator_register_notifier(gmu->cx_gdsc, &gmu->gdsc_nb);
+
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to register gmu cx gdsc notifier: %d\n", ret);
+		return ret;
+	}
+
+	init_completion(&gmu->gdsc_gate);
+	complete_all(&gmu->gdsc_gate);
 
 	return 0;
 }
@@ -2863,8 +2926,7 @@ static int a6xx_gmu_power_off(struct adreno_device *adreno_dev)
 
 	clk_bulk_disable_unprepare(gmu->num_clks, gmu->clks);
 
-	/* Poll to make sure that the CX is off */
-	a6xx_cx_regulator_disable_wait(gmu->cx_gdsc, device, 5000);
+	a6xx_gmu_disable_gdsc(adreno_dev);
 
 	a6xx_rdpm_cx_freq_update(gmu, 0);
 
@@ -3071,7 +3133,6 @@ static int a6xx_first_boot(struct adreno_device *adreno_dev)
 	device->pwrscale.devfreq_enabled = true;
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 
@@ -3102,7 +3163,7 @@ static int a6xx_power_off(struct adreno_device *adreno_dev)
 	WARN_ON(!test_bit(GMU_PRIV_GPU_STARTED, &gmu->flags));
 
 	adreno_suspend_context(device);
-
+	
 	/*
 	 * adreno_suspend_context() unlocks the device mutex, which
 	 * could allow a concurrent thread to attempt SLUMBER sequence.
@@ -3353,7 +3414,6 @@ static void a6xx_gmu_touch_wakeup(struct adreno_device *adreno_dev)
 	set_bit(GMU_PRIV_GPU_STARTED, &gmu->flags);
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 done:

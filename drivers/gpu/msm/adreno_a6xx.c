@@ -95,27 +95,27 @@ static u32 a6xx_ifpc_pwrup_reglist[] = {
 	A6XX_CP_AHB_CNTL,
 };
 
-/* Applicable to a620, a635, a650 and a660 */
+/* Applicable to a620, a621, a635, a650 and a660 */
 static u32 a650_ifpc_pwrup_reglist[] = {
-	A6XX_CP_PROTECT_REG+32,
-	A6XX_CP_PROTECT_REG+33,
-	A6XX_CP_PROTECT_REG+34,
-	A6XX_CP_PROTECT_REG+35,
-	A6XX_CP_PROTECT_REG+36,
-	A6XX_CP_PROTECT_REG+37,
-	A6XX_CP_PROTECT_REG+38,
-	A6XX_CP_PROTECT_REG+39,
-	A6XX_CP_PROTECT_REG+40,
-	A6XX_CP_PROTECT_REG+41,
-	A6XX_CP_PROTECT_REG+42,
-	A6XX_CP_PROTECT_REG+43,
-	A6XX_CP_PROTECT_REG+44,
-	A6XX_CP_PROTECT_REG+45,
-	A6XX_CP_PROTECT_REG+46,
-	A6XX_CP_PROTECT_REG+47,
+	A6XX_CP_PROTECT_REG + 32,
+	A6XX_CP_PROTECT_REG + 33,
+	A6XX_CP_PROTECT_REG + 34,
+	A6XX_CP_PROTECT_REG + 35,
+	A6XX_CP_PROTECT_REG + 36,
+	A6XX_CP_PROTECT_REG + 37,
+	A6XX_CP_PROTECT_REG + 38,
+	A6XX_CP_PROTECT_REG + 39,
+	A6XX_CP_PROTECT_REG + 40,
+	A6XX_CP_PROTECT_REG + 41,
+	A6XX_CP_PROTECT_REG + 42,
+	A6XX_CP_PROTECT_REG + 43,
+	A6XX_CP_PROTECT_REG + 44,
+	A6XX_CP_PROTECT_REG + 45,
+	A6XX_CP_PROTECT_REG + 46,
+	A6XX_CP_PROTECT_REG + 47,
 };
 
-/* Applicable to a620, a635, a650 and a660 */
+/* Applicable to a620, a621, a635, a650 and a660 */
 static u32 a650_pwrup_reglist[] = {
 	A6XX_TPL1_BICUBIC_WEIGHTS_TABLE_0,
 	A6XX_TPL1_BICUBIC_WEIGHTS_TABLE_1,
@@ -285,7 +285,7 @@ __get_gmu_ao_cgc_mode_cntl(struct adreno_device *adreno_dev)
 	else if (adreno_is_a615_family(adreno_dev))
 		return 0x00000222;
 	/* a662 should be checked before a660 */
-	else if (adreno_is_a662(adreno_dev))
+	else if (adreno_is_a662(adreno_dev) || adreno_is_a621(adreno_dev))
 		return 0x00020200;
 	else if (adreno_is_a660(adreno_dev))
 		return 0x00020000;
@@ -317,26 +317,13 @@ __get_gmu_ao_cgc_hyst_cntl(struct adreno_device *adreno_dev)
 
 static unsigned int __get_gmu_wfi_config(struct adreno_device *adreno_dev)
 {
-	if (adreno_is_a620(adreno_dev) || adreno_is_a640(adreno_dev) ||
+	unsigned int rev = ADRENO_GPUREV(adreno_dev);
+
+	if ((rev == ADRENO_REV_A620) || adreno_is_a640(adreno_dev) ||
 		adreno_is_a650(adreno_dev))
 		return 0x00000002;
 
 	return 0x00000000;
-}
-
-void a6xx_cx_regulator_disable_wait(struct regulator *reg,
-				struct kgsl_device *device, u32 timeout)
-{
-	u32 offset;
-
-	offset = adreno_is_a662(ADRENO_DEVICE(device)) ?
-			 A662_GPU_CC_CX_GDSCR : A6XX_GPU_CC_CX_GDSCR;
-
-	if (!adreno_regulator_disable_poll(device, reg, offset, timeout)) {
-		dev_err(device->dev, "GPU CX wait timeout. Dumping CX votes:\n");
-		/* Dump the cx regulator consumer list */
-		qcom_clk_dump(NULL, reg, false);
-	}
 }
 
 static void set_holi_sptprac_clock(struct kgsl_device *device, bool enable)
@@ -515,7 +502,7 @@ static void a6xx_set_secvid(struct kgsl_device *device)
 		upper_32_bits(KGSL_IOMMU_SECURE_BASE32));
 	kgsl_regwrite(device, A6XX_RBBM_SECVID_TSB_TRUSTED_SIZE,
 		FIELD_PREP(GENMASK(31, 12),
-		(KGSL_IOMMU_SECURE_SIZE(&device->mmu) / SZ_4K)));
+			(KGSL_IOMMU_SECURE_SIZE(&device->mmu) / SZ_4K)));
 
 	if (ADRENO_QUIRK(ADRENO_DEVICE(device), ADRENO_QUIRK_SECVID_SET_ONCE))
 		set = true;

@@ -14,6 +14,10 @@
 #include <linux/qcom-cpufreq-hw.h>
 #include <linux/cpumask.h>
 
+#if IS_ENABLED(CONFIG_PERF_RESERVE)
+#include <linux/proc_fs.h>
+#endif
+
 #include <trace/hooks/sched.h>
 #include <trace/hooks/cpufreq.h>
 #include <trace/hooks/topology.h>
@@ -3081,6 +3085,8 @@ static void walt_update_tg_pointer(struct cgroup_subsys_state *css)
 		walt_init_topapp_tg(css_tg(css));
 	else if (!strcmp(css->cgroup->kn->name, "foreground"))
 		walt_init_foreground_tg(css_tg(css));
+	else if (!strcmp(css->cgroup->kn->name, "foreground-boost"))
+		walt_init_foreground_tg(css_tg(css));
 	else
 		walt_init_tg(css_tg(css));
 }
@@ -4269,6 +4275,52 @@ static void walt_init_tg_pointers(void)
 	rcu_read_unlock();
 }
 
+#if IS_ENABLED(CONFIG_PERF_RESERVE)
+unsigned int proc_perf_reserve;
+
+static int perf_reserve_show(struct seq_file *m, void *data)
+{
+	seq_printf(m, "%u\n", proc_perf_reserve);
+	return 0;
+}
+
+static int perf_reserve_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, perf_reserve_show, NULL);
+}
+
+static ssize_t perf_reserve_write(struct file *file,
+		const char __user *buf, size_t count, loff_t *offs)
+{
+	char temp[32] = {0,};
+	unsigned int value = 0;
+	int ret;
+
+	if (count > sizeof(temp) - 1)
+		return -EINVAL;
+
+	if (copy_from_user(temp, buf, count))
+		return -EFAULT;
+
+	ret = kstrtouint(strstrip(temp), 10, &value);
+	if (ret) {
+		pr_err("set perf_reserve node err = %d", ret);
+		return -EFAULT;
+	} else
+		proc_perf_reserve = value > (MAX_PRIO - 1)? (MAX_PRIO - 1) : value;
+
+	return count;
+}
+
+static const struct proc_ops proc_perf_reserve_op = {
+	.proc_open = perf_reserve_open,
+	.proc_write = perf_reserve_write,
+	.proc_read = seq_read,
+	.proc_lseek = seq_lseek,
+	.proc_release = single_release,
+};
+#endif
+
 static void walt_init(struct work_struct *work)
 {
 	struct ctl_table_header *hdr;
@@ -4304,6 +4356,12 @@ static void walt_init(struct work_struct *work)
 	core_ctl_init();
 	walt_boost_init();
 	waltgov_register();
+
+#if IS_ENABLED(CONFIG_PERF_RESERVE)
+	proc_perf_reserve = 0;
+	if (!proc_create("perf_reserve", 0644, NULL, &proc_perf_reserve_op))
+		pr_err("Failed to register proc interface 'perf_reserve'\n");
+#endif
 
 	i = match_string(sched_feat_names, __SCHED_FEAT_NR, "TTWU_QUEUE");
 	if (i >= 0) {
@@ -4343,4 +4401,15 @@ MODULE_LICENSE("GPL v2");
 
 #if IS_ENABLED(CONFIG_SCHED_WALT_DEBUG)
 MODULE_SOFTDEP("pre: sched-walt-debug");
+#endif
+
+#if IS_ENABLED(CONFIG_SEC_QC_SUMMARY)
+#include <linux/samsung/debug/qcom/sec_qc_summary.h>
+
+void sec_qc_summary_set_sched_walt_info(struct sec_qc_summary_data_apss *apss)
+{
+	apss->aplpm.num_clusters = num_sched_clusters;
+	apss->aplpm.p_cluster = virt_to_phys(sched_cluster);
+}
+EXPORT_SYMBOL(sec_qc_summary_set_sched_walt_info);
 #endif

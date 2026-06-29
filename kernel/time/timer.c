@@ -60,6 +60,8 @@
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(hrtimer_expire_entry);
 EXPORT_TRACEPOINT_SYMBOL_GPL(hrtimer_expire_exit);
+EXPORT_TRACEPOINT_SYMBOL_GPL(timer_expire_entry);
+EXPORT_TRACEPOINT_SYMBOL_GPL(timer_expire_exit);
 
 __visible u64 jiffies_64 __cacheline_aligned_in_smp = INITIAL_JIFFIES;
 

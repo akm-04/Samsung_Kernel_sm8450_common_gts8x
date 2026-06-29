@@ -183,6 +183,13 @@ static void walt_get_indicies(struct task_struct *p, int *order_index,
 		return;
 	}
 
+#if IS_ENABLED(CONFIG_PERF_RESERVE)
+	if (is_task_prio_need_low_cpu(p))
+		return;
+	if (is_task_high_cpu_prio(p))
+		*end_index = num_sched_clusters;
+#endif
+
 	if (is_uclamp_boosted || per_task_boost ||
 		task_boost_policy(p) == SCHED_BOOST_ON_BIG ||
 		walt_task_skip_min_cpu(p)) {
@@ -269,6 +276,13 @@ static void walt_find_best_target(struct sched_domain *sd,
 		stop_index = 0;
 		most_spare_wake_cap = LONG_MIN;
 	}
+
+#if IS_ENABLED(CONFIG_PERF_RESERVE)
+	if (is_task_prio_need_low_cpu(p)) {
+		stop_index = 0;
+		most_spare_wake_cap = LONG_MIN;
+	}
+#endif
 
 	/* fast path for prev_cpu */
 	if (((capacity_orig_of(prev_cpu) == capacity_orig_of(start_cpu)) ||

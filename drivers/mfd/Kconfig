@@ -2179,5 +2179,8 @@ config MFD_INTEL_M10_BMC
 	  additional drivers must be enabled in order to use the functionality
 	  of the device.
 
+config SEC_AP_PMIC
+	tristate "SEC AP PMIC Driver"
+
 endmenu
 endif

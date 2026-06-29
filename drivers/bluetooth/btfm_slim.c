@@ -206,6 +206,7 @@ int btfm_slim_disable_ch(struct btfmslim *btfmslim, struct btfmslim_ch *ch,
 	}
 
 	btfm_is_port_opening_delayed = false;
+ 
 
 	if (rxport && (btfmslim->sample_rate == 44100 ||
 		btfmslim->sample_rate == 88200)) {
@@ -428,6 +429,15 @@ int btfm_slim_hw_init(struct btfmslim *btfmslim)
 			"IFD Enum Addr: manu id:%.02x prod code:%.02x dev idx:%.02x instance:%.02x",
 			slim_ifd->e_addr.manf_id, slim_ifd->e_addr.prod_code,
 			slim_ifd->e_addr.dev_index, slim_ifd->e_addr.instance);
+
+	if (btfm_num_ports_open == 0 && (chipset_ver == QCA_HSP_SOC_ID_0200 ||
+		chipset_ver == QCA_HSP_SOC_ID_0210 ||
+		chipset_ver == QCA_HSP_SOC_ID_1201 ||
+		chipset_ver == QCA_HSP_SOC_ID_1211)) {
+		BTFMSLIM_INFO("SB reset needed before getting LA, sleeping");
+		msleep(DELAY_FOR_PORT_OPEN_MS);
+	}
+
 
 	/* Assign Logical Address for PGD (Ported Generic Device)
 	 * enumeration address

@@ -327,6 +327,9 @@ static int adc_tm_get_dt_data(struct platform_device *pdev,
 		if (ret)
 			prescal = 1;
 
+#if IS_ENABLED(CONFIG_SEC_EXT_THERMAL_MONITOR)
+		adc_tm->sensor[idx].ext_tm = of_property_read_bool(child, "sec,ext-tm");
+#endif
 		/* Individual channel properties */
 		adc_tm->sensor[idx].adc_ch = channel_num;
 		adc_tm->sensor[idx].cal_sel = calib_type;

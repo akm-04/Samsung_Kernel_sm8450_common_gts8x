@@ -526,6 +526,7 @@ static void pmic_pon_log_fault_panic(struct pmic_pon_log_dev *pon_dev)
 	int prev_pon_success = 0;
 	int warm_reset_skip_count = 0;
 	bool pon_success_found = false;
+	bool panic_flag = false;
 	u8 mask = (u8)~FAULT_REASON2_RESTART_PON_MASK;
 	char buf[BUF_SIZE];
 	int i;
@@ -564,12 +565,17 @@ static void pmic_pon_log_fault_panic(struct pmic_pon_log_dev *pon_dev)
 				pmic_pon_log_print_reason(buf, BUF_SIZE,
 							pon_dev->log[i].data0,
 							pmic_pon_fault_reason1);
-				panic("PMIC SID0 FAULT; FAULT_REASON1=%s", buf);
+				/* set panic flag except for UVLO  */
+				if (i == last_pon_success && pon_dev->log[i].data0 & 0xBF)
+					panic_flag = true;
+
 			} else if (pon_dev->log[i].data1 & mask) {
 				pmic_pon_log_print_reason(buf, BUF_SIZE,
 							pon_dev->log[i].data1,
 							pmic_pon_fault_reason2);
-				panic("PMIC SID0 FAULT; FAULT_REASON2=%s", buf);
+				/* set panic flag except for RESTART_PON */
+				if (i == last_pon_success && pon_dev->log[i].data1 & 0xBF)
+					panic_flag = true;
 			}
 			break;
 		case PMIC_PON_EVENT_FAULT_REASON_3:
@@ -577,7 +583,9 @@ static void pmic_pon_log_fault_panic(struct pmic_pon_log_dev *pon_dev)
 				pmic_pon_log_print_reason(buf, BUF_SIZE,
 							pon_dev->log[i].data0,
 							pmic_pon_fault_reason3);
-				panic("PMIC SID0 FAULT; FAULT_REASON3=%s", buf);
+				/* set panic flag except for GP_FAULT4 ~ 11 */ 
+				if (i == last_pon_success)
+					panic_flag = true;
 			}
 			break;
 		case PMIC_PON_EVENT_PMIC_SID1_FAULT ... PMIC_PON_EVENT_PMIC_SID13_FAULT:
@@ -585,24 +593,25 @@ static void pmic_pon_log_fault_panic(struct pmic_pon_log_dev *pon_dev)
 				pmic_pon_log_print_reason(buf, BUF_SIZE,
 							pon_dev->log[i].data0,
 							pmic_pon_fault_reason1);
-				panic("PMIC SID%u FAULT; FAULT_REASON1=%s",
-					pon_dev->log[i].event -
-					    PMIC_PON_EVENT_PMIC_SID1_FAULT + 1,
-					buf);
+				/* set panic flag except for UVLO */
+				if (i == last_pon_success && pon_dev->log[i].data0 & 0xBF)
+					panic_flag = true;
+
 			} else if (pon_dev->log[i].data1 & mask) {
 				pmic_pon_log_print_reason(buf, BUF_SIZE,
 							pon_dev->log[i].data1,
 							pmic_pon_fault_reason2);
-				panic("PMIC SID%u FAULT; FAULT_REASON2=%s",
-					pon_dev->log[i].event -
-					    PMIC_PON_EVENT_PMIC_SID1_FAULT + 1,
-					buf);
+				/* set panic flag except for RESTART_PON */
+				if (i == last_pon_success && pon_dev->log[i].data1 & 0xBF)
+					panic_flag = true;
 			}
 			break;
 		default:
 			break;
 		}
 	}
+	if (panic_flag == true)
+		panic("PMIC PON EVENT FAULT");
 }
 
 static int pmic_pon_log_probe(struct platform_device *pdev)

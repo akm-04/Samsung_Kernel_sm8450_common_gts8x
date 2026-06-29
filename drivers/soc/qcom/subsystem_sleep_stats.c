@@ -210,6 +210,11 @@ bool has_system_slept(void)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(system_stats); i++) {
+#if IS_ENABLED(CONFIG_SEC_PM)
+		/* Note: aosd, ddr is not our concern */
+		if ((strcmp("cxsd", system_stats[i].name)))
+			continue;
+#endif
 		if (b_system_stats[i].count == a_system_stats[i].count) {
 			pr_info("System %s has not entered sleep\n", system_stats[i].name);
 			return false;
@@ -545,7 +550,7 @@ static int subsytem_stats_suspend(struct device *dev)
 
 	mutex_lock(&sleep_stats_mutex);
 	for (i = 0; i < ARRAY_SIZE(subsystem_stats); i++) {
-		ret = subsystem_sleep_stats(stats_data, b_subsystem_stats,
+		ret = subsystem_sleep_stats(stats_data, b_subsystem_stats + i,
 					subsystem_stats[i].pid, subsystem_stats[i].smem_item);
 		if (ret == -ENODEV)
 			subsystem_stats[i].not_present = true;
@@ -554,7 +559,7 @@ static int subsytem_stats_suspend(struct device *dev)
 	}
 
 	for (i = 0; i < ARRAY_SIZE(system_stats); i++)
-		subsystem_sleep_stats(stats_data, b_system_stats,
+		subsystem_sleep_stats(stats_data, b_system_stats + i,
 					system_stats[i].pid, system_stats[i].smem_item);
 	mutex_unlock(&sleep_stats_mutex);
 
@@ -571,11 +576,11 @@ static int subsytem_stats_resume(struct device *dev)
 
 	mutex_lock(&sleep_stats_mutex);
 	for (i = 0; i < ARRAY_SIZE(subsystem_stats); i++)
-		subsystem_sleep_stats(stats_data, a_subsystem_stats,
+		subsystem_sleep_stats(stats_data, a_subsystem_stats + i,
 					subsystem_stats[i].pid, subsystem_stats[i].smem_item);
 
 	for (i = 0; i < ARRAY_SIZE(system_stats); i++)
-		subsystem_sleep_stats(stats_data, a_system_stats,
+		subsystem_sleep_stats(stats_data, a_system_stats + i,
 					system_stats[i].pid, system_stats[i].smem_item);
 	mutex_unlock(&sleep_stats_mutex);
 

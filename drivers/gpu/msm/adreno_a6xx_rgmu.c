@@ -858,7 +858,7 @@ static void rgmu_idle_check(struct work_struct *work)
 
 	if (!atomic_read(&device->active_cnt)) {
 		spin_lock(&device->submit_lock);
-
+		
 		if (device->submit_now) {
 			spin_unlock(&device->submit_lock);
 			kgsl_pwrscale_update(device);
@@ -868,7 +868,7 @@ static void rgmu_idle_check(struct work_struct *work)
 
 		device->slumber = true;
 		spin_unlock(&device->submit_lock);
-
+		
 		a6xx_power_off(adreno_dev);
 	} else {
 		kgsl_pwrscale_update(device);
@@ -913,7 +913,6 @@ static int a6xx_boot(struct adreno_device *adreno_dev)
 	set_bit(RGMU_PRIV_GPU_STARTED, &rgmu->flags);
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 	return 0;
@@ -951,7 +950,6 @@ static void a6xx_rgmu_touch_wakeup(struct adreno_device *adreno_dev)
 	set_bit(RGMU_PRIV_GPU_STARTED, &rgmu->flags);
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 done:
@@ -1023,7 +1021,6 @@ static int a6xx_first_boot(struct adreno_device *adreno_dev)
 	device->pwrscale.devfreq_enabled = true;
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 	return 0;

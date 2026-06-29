@@ -13,6 +13,13 @@
 #include "core.h"
 #include "gadget.h"
 
+#if IS_ENABLED(CONFIG_USB_NOTIFY_LAYER)
+#include <linux/usb_notify.h>
+#endif
+#if IS_ENABLED(CONFIG_USB_CONFIGFS_F_SS_MON_GADGET)
+#include <linux/usb/f_ss_mon_gadget.h>
+#endif
+
 struct kprobe_data {
 	struct dwc3 *dwc;
 	int xi0;
@@ -76,6 +83,11 @@ static int entry_dwc3_gadget_reset_interrupt(struct kretprobe_instance *ri,
 	struct dwc3 *dwc = (struct dwc3 *)regs->regs[0];
 
 	dwc3_msm_notify_event(dwc, DWC3_CONTROLLER_NOTIFY_CLEAR_DB, 0);
+
+#if IS_ENABLED(CONFIG_USB_CONFIGFS_F_SS_MON_GADGET)
+	usb_reset_notify(dwc->gadget);
+#endif
+
 	return 0;
 }
 
@@ -95,6 +107,38 @@ static int exit_dwc3_gadget_conndone_interrupt(struct kretprobe_instance *ri,
 
 	dwc3_msm_notify_event(data->dwc, DWC3_CONTROLLER_CONNDONE_EVENT, 0);
 
+	switch (data->dwc->speed) {
+	case DWC3_DSTS_SUPERSPEED_PLUS:
+#if defined(CONFIG_USB_NOTIFY_PROC_LOG)
+		store_usblog_notify(NOTIFY_USBSTATE,
+			(void *)"USB_STATE=ENUM:CONNDONE:PSS", NULL);
+#endif
+		break;
+	case DWC3_DSTS_SUPERSPEED:
+#if defined(CONFIG_USB_NOTIFY_PROC_LOG)
+		store_usblog_notify(NOTIFY_USBSTATE,
+			(void *)"USB_STATE=ENUM:CONNDONE:SS", NULL);
+#endif
+		break;
+	case DWC3_DSTS_HIGHSPEED:
+#if defined(CONFIG_USB_NOTIFY_PROC_LOG)
+		store_usblog_notify(NOTIFY_USBSTATE,
+			(void *)"USB_STATE=ENUM:CONNDONE:HS", NULL);
+#endif
+		break;
+	case DWC3_DSTS_FULLSPEED:
+#if defined(CONFIG_USB_NOTIFY_PROC_LOG)
+		store_usblog_notify(NOTIFY_USBSTATE,
+			(void *)"USB_STATE=ENUM:CONNDONE:FS", NULL);
+#endif
+		break;
+	case DWC3_DSTS_LOWSPEED:
+#if defined(CONFIG_USB_NOTIFY_PROC_LOG)
+		store_usblog_notify(NOTIFY_USBSTATE,
+			(void *)"USB_STATE=ENUM:CONNDONE:LS", NULL);
+#endif
+		break;
+	}
 	return 0;
 }
 
@@ -107,6 +151,31 @@ static int entry_dwc3_gadget_pullup(struct kretprobe_instance *ri,
 
 	dwc3_msm_notify_event(dwc, DWC3_CONTROLLER_PULLUP, is_on);
 
+	return 0;
+}
+
+static int entry_dwc3_gadget_vbus_draw(struct kretprobe_instance *ri,
+				   struct pt_regs *regs)
+{
+
+	unsigned int mA = (unsigned int)regs->regs[1];
+
+	switch (mA) {
+	case 2:
+#if IS_ENABLED(CONFIG_USB_CONFIGFS_F_SS_MON_GADGET)
+		pr_info("[USB] dwc3_gadget_vbus_draw: suspend\n");
+		make_suspend_current_event();
+#endif
+		break;
+	case 100:
+		break;
+	case 500:
+		break;
+	case 900:
+		break;
+	default:
+		break;
+	}
 	return 0;
 }
 
@@ -131,6 +200,7 @@ static struct kretprobe dwc3_msm_probes[] = {
 	ENTRY(dwc3_gadget_reset_interrupt),
 	ENTRY_EXIT(dwc3_gadget_conndone_interrupt),
 	ENTRY(dwc3_gadget_pullup),
+	ENTRY(dwc3_gadget_vbus_draw),
 };
 
 

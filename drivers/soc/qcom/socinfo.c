@@ -15,6 +15,7 @@
 #include <linux/sys_soc.h>
 #include <linux/types.h>
 #include <soc/qcom/socinfo.h>
+#include <linux/samsung/debug/sec_debug.h>
 
 /*
  * SoC version type with major number in the upper 16 bits and minor
@@ -776,12 +777,14 @@ static const struct soc_id soc_id[] = {
 	{ 482, "WAIPIOP" },
 	{ 506, "DIWALI" },
 	{ 547, "DIWALIP" },
+	{ 564, "DIWALI-LTE" },
 	{ 537, "PARROT" },
 	{ 530, "CAPE" },
 	{ 531, "CAPEP" },
 	{ 540, "CAPE-V2" },
 	{ 525, "NEO" },
 	{ 552, "WAIPIO-LTE" },
+	{ 554, "NEO-LA" },
 };
 
 static struct qcom_socinfo *qsocinfo;
@@ -1009,6 +1012,35 @@ msm_get_images(struct device *dev,
 	return pos;
 }
 
+static ssize_t
+msm_get_crash(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	int ret = 0;
+	int is_debug_low = 0;
+
+	unsigned int debug_level = sec_debug_level();
+
+	switch (debug_level) {
+		case SEC_DEBUG_LEVEL_LOW:
+			is_debug_low = 1;
+			break;
+		case SEC_DEBUG_LEVEL_MID:
+			is_debug_low = 0;
+			break;
+	}
+
+#ifndef CONFIG_SEC_FACTORY
+	if (!is_debug_low) {
+#ifndef CONFIG_SEC_CDSP_NO_CRASH_FOR_ENG
+		BUG_ON(1);
+#endif
+	}
+#endif
+	return ret;
+}
+
 static struct device_attribute image_version =
 	__ATTR(image_version, 0644,
 			msm_get_image_version, msm_set_image_version);
@@ -1028,6 +1060,8 @@ static struct device_attribute select_image =
 static struct device_attribute images =
 	__ATTR(images, 0444, msm_get_images, NULL);
 
+static struct device_attribute crash =
+	__ATTR(crash, 0444, msm_get_crash, NULL);
 
 static umode_t soc_info_attribute(struct kobject *kobj,
 						   struct attribute *attr,
@@ -1105,6 +1139,7 @@ static void socinfo_populate_sysfs(struct qcom_socinfo *qcom_socinfo)
 	msm_custom_socinfo_attrs[i++] = &image_crm_version.attr;
 	msm_custom_socinfo_attrs[i++] = &select_image.attr;
 	msm_custom_socinfo_attrs[i++] = &images.attr;
+	msm_custom_socinfo_attrs[i++] = &crash.attr;
 	msm_custom_socinfo_attrs[i++] = NULL;
 	qcom_socinfo->attr.custom_attr_group = &custom_soc_attr_group;
 }

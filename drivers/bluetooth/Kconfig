@@ -451,4 +451,18 @@ config BTFM_SLIM
 		Say Y here to compile support for Bluetooth slimbus driver
 		into the kernel or say M to compile as a module.
 
+config BT_BCM4389
+	tristate "Enable BCM4389 driver"
+	depends on RFKILL
+	help
+	  Adds BCM43XX RFKILL driver for Broadcom BCM4361, BCM4375, BCM4389 chipset
+	  default is n.
+
+config BT_BLUESLEEP
+	tristate "Enable BlUESLEEP driver"
+	depends on RFKILL
+	help
+	  Adds BlUESLEEP driver for Broadcom chipset.
+	  default is n.
+
 endmenu

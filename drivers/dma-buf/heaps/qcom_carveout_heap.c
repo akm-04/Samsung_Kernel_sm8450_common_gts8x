@@ -479,6 +479,10 @@ int qcom_carveout_heap_create(struct platform_heap *heap_data)
 	carveout_heap->is_nomap = heap_data->is_nomap;
 
 	exp_info.name = heap_data->name;
+#ifdef CONFIG_RBIN
+	if (!strncmp(heap_data->name, "rbin", 4))
+		exp_info.name = "qcom,camera";
+#endif
 	exp_info.ops = &carveout_heap_ops;
 	exp_info.priv = carveout_heap;
 

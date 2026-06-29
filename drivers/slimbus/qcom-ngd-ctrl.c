@@ -1061,6 +1061,7 @@ static int qcom_slim_ngd_xfer_msg_sync(struct slim_controller *ctrl,
 	DECLARE_COMPLETION_ONSTACK(done);
 	int ret, timeout;
 
+
 	ret = pm_runtime_get_sync(ctrl->dev);
 	if (ret < 0) {
 		SLIM_ERR(dev, "SLIM %s: PM get_sync failed ret :%d count:%d TID:%d\n",
@@ -1068,6 +1069,7 @@ static int qcom_slim_ngd_xfer_msg_sync(struct slim_controller *ctrl,
 		pm_runtime_put_sync(ctrl->dev);
 		return ret;
 	}
+
 
 	SLIM_INFO(dev, "SLIM %s: PM get_sync count:%d TID:%d\n",
 		__func__, atomic_read(&ctrl->dev->power.usage_count), txn->tid);
