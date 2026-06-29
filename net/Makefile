@@ -86,6 +86,9 @@ obj-y				+= l3mdev/
 endif
 obj-$(CONFIG_QRTR)		+= qrtr/
 obj-$(CONFIG_NET_NCSI)		+= ncsi/
+# SEC_PRODUCT_FEATURE_KNOX_SUPPORT_NPA {
+obj-$(CONFIG_KNOX_NCM)		+= ncm/
+# SEC_PRODUCT_FEATURE_KNOX_SUPPORT_NPA }
 obj-$(CONFIG_XDP_SOCKETS)	+= xdp/
 obj-$(CONFIG_MPTCP)		+= mptcp/
 obj-$(CONFIG_NEURON)		+= neuron/

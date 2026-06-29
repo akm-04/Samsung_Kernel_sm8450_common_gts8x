@@ -58,6 +58,8 @@ bool panic_on_taint_nousertaint = false;
 int panic_timeout = CONFIG_PANIC_TIMEOUT;
 EXPORT_SYMBOL_GPL(panic_timeout);
 
+extern bool thermal_poweroff_running(void); // SEC_PM
+
 #define PANIC_PRINT_TASK_INFO		0x00000001
 #define PANIC_PRINT_MEM_INFO		0x00000002
 #define PANIC_PRINT_TIMER_INFO		0x00000004
@@ -182,6 +184,9 @@ void panic(const char *fmt, ...)
 	int state = 0;
 	int old_cpu, this_cpu;
 	bool _crash_kexec_post_notifiers = crash_kexec_post_notifiers;
+
+	if (thermal_poweroff_running()) // SEC_PM
+		machine_power_off();
 
 	/*
 	 * Disable local interrupts. This will prevent panic_smp_self_stop
