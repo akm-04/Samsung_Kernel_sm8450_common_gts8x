@@ -189,3 +189,7 @@ obj-$(CONFIG_GNSS)		+= gnss/
 obj-$(CONFIG_INTERCONNECT)	+= interconnect/
 obj-$(CONFIG_COUNTER)		+= counter/
 obj-$(CONFIG_MOST)		+= most/
+# SPU signature verify
+obj-$(CONFIG_SPU_VERIFY)        += spu_verify/
+# uH
+obj-$(CONFIG_UH)		+= uh/
