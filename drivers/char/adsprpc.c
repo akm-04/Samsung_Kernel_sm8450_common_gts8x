@@ -62,6 +62,7 @@
 #include <asm/arch_timer.h>
 
 #include <trace/events/rproc_qcom.h>
+#include <linux/sec_debug.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/fastrpc.h>
@@ -223,7 +224,7 @@
 #define MAX_PERSISTENT_HEADERS    (25)
 
 /* Length of glink transaction history to store */
-#define GLINK_MSG_HISTORY_LEN (128)
+#define GLINK_MSG_HISTORY_LEN (512)
 
 #define PERF_CAPABILITY_SUPPORT	(1 << 1)
 #define KERNEL_ERROR_CODE_V1_SUPPORT	1
@@ -236,6 +237,30 @@
 
 /* Max number of region supported */
 #define MAX_UNIQUE_ID 5
+
+#define SS_MEM_PROFILE
+#define SS_MEM_DEBUG
+
+#if defined(SS_MEM_PROFILE)
+#include <linux/samsung/debug/sec_debug.h>
+
+struct mem_profile_private {
+	struct hlist_node list_node;
+
+	int cid;
+	int tgid_open;
+	int tgid;
+	char comm[TASK_COMM_LEN];
+
+	unsigned int profile_len_peak_usage;
+	unsigned int profile_page_peak_usage;
+};
+
+#define MAX_MEM_PROFILE_ENTRY ((PAGE_SIZE/sizeof(struct mem_profile_private)) - 1)
+
+static int mem_profile_entry;
+struct hlist_head mem_profile_root = HLIST_HEAD_INIT;
+#endif
 
 /* Unique index flag used for mini dump */
 static int md_unique_index_flag[MAX_UNIQUE_ID] = { 0, 0, 0, 0, 0 };
@@ -381,6 +406,12 @@ struct fastrpc_buf {
 	bool in_use;	/* Used only for persistent header buffers */
 	struct timespec64 buf_start_time;
 	struct timespec64 buf_end_time;
+
+#if defined(SS_MEM_DEBUG)
+	uint32_t pid;           /* alloc real pid */
+	char comm[TASK_COMM_LEN];
+#endif
+
 };
 
 struct fastrpc_ctx_lst;
@@ -563,7 +594,14 @@ struct fastrpc_channel_ctx {
 	/* Store gfa structure debug details */
 	struct fastrpc_buf *buf;
 };
-
+struct exit_debug {
+	int pid;
+	int tid;
+	int error_code;
+	int stage;
+	int64_t ns;
+	int mid;
+};
 struct fastrpc_apps {
 	struct fastrpc_channel_ctx *channel;
 	struct cdev cdev;
@@ -605,6 +643,8 @@ struct fastrpc_apps {
 	bool single_core_latency_vote;
 	/* Indicates cdsp device status */
 	int fastrpc_cdsp_status;
+	int exit_debug_index;
+	struct exit_debug debug[4000];
 };
 
 struct fastrpc_mmap {
@@ -633,6 +673,10 @@ struct fastrpc_mmap {
 	unsigned int ctx_refs; /* Indicates reference count for context map */
 	/* Map in use for dma handle */
 	unsigned int dma_handle_refs;
+#if defined(SS_MEM_DEBUG)
+	uint32_t pid;           /* alloc real pid */
+	char comm[TASK_COMM_LEN];
+#endif
 };
 
 enum fastrpc_perfkeys {
@@ -730,6 +774,17 @@ struct fastrpc_file {
 	/* Flag to indicate dynamic process creation status*/
 	enum fastrpc_process_create_state dsp_process_state;
 	struct completion shutdown;
+
+#if defined(SS_MEM_PROFILE)
+	unsigned int len_curr_usage;
+	unsigned int len_peak_usage;
+
+	unsigned int page_curr_usage;
+	unsigned int page_peak_usage;
+
+	struct mem_profile_private *mem_profile;
+#endif
+
 };
 
 static struct fastrpc_apps gfa;
@@ -1351,7 +1406,7 @@ static void fastrpc_mmap_free(struct fastrpc_mmap *map, uint32_t flags)
 		spin_lock_irqsave(&me->hlock, irq_flags);
 		if (map->refs)
 			map->refs--;
-		if (!map->refs && !map->ctx_refs)
+		if (!map->refs)
 			hlist_del_init(&map->hn);
 		if (map->refs > 0) {
 			ADSPRPC_WARN(
@@ -1433,6 +1488,14 @@ static void fastrpc_mmap_free(struct fastrpc_mmap *map, uint32_t flags)
 		if (!IS_ERR_OR_NULL(map->buf))
 			dma_buf_put(map->buf);
 	}
+
+#if defined(SS_MEM_PROFILE)
+	if (!IS_ERR_OR_NULL(fl) && !IS_ERR_OR_NULL(map)) {
+		fl->len_curr_usage -= map->len;
+		fl->page_curr_usage -= map->size;
+	}
+#endif
+
 bail:
 	kfree(map);
 }
@@ -1718,6 +1781,78 @@ bail:
 		ktime_get_real_ts64(&map->map_end_time);
 	if (err && map)
 		fastrpc_mmap_free(map, 0);
+
+#if defined(SS_MEM_DEBUG)
+	if (!err && map) {
+		map->pid = current->pid;
+		strncpy(map->comm, current->comm, TASK_COMM_LEN - 1);
+	}
+#endif
+
+#if defined(SS_MEM_PROFILE)
+	if (!err && map) {
+		fl->len_curr_usage += map->len;
+		fl->page_curr_usage += map->size;
+
+		if (fl->len_curr_usage > fl->len_peak_usage) {
+			fl->len_peak_usage = fl->len_curr_usage;
+				if (sec_debug_level() < SEC_DEBUG_LEVEL_LOW) {
+					pr_err("[AISYS] [LEN] CID : %d tgid_open : %d tgid : %d len_peak_usage : %d page_peak_usage : %d\n",
+						fl->cid,
+						fl->tgid_open,
+						fl->tgid,
+						fl->len_peak_usage,
+						fl->page_peak_usage);
+				}
+		}
+
+		if (fl->page_curr_usage > fl->page_peak_usage) {
+			fl->page_peak_usage = fl->page_curr_usage;
+			if (sec_debug_level() < SEC_DEBUG_LEVEL_LOW) {
+				pr_err("[AISYS] [PAGE] CID : %d tgid_open : %d tgid : %d len_peak_usage : %d page_peak_usage : %d\n",
+					fl->cid,
+					fl->tgid_open,
+					fl->tgid,
+					fl->len_peak_usage,
+					fl->page_peak_usage);
+			}
+		}
+
+		if (IS_ERR_OR_NULL(fl->mem_profile)) {
+			if (sec_debug_level() < SEC_DEBUG_LEVEL_LOW)
+				pr_err("[AISYS] mem_profile is NULL\n");
+		} else {
+			fl->mem_profile->cid = fl->cid;
+			fl->mem_profile->tgid = fl->tgid;
+
+			if (fl->len_peak_usage > fl->mem_profile->profile_len_peak_usage) {
+				fl->mem_profile->profile_len_peak_usage = fl->len_peak_usage;
+				if (sec_debug_level() < SEC_DEBUG_LEVEL_LOW) {
+					pr_err("[AISYS] [UPDATE_LEN_PEAK_USAGE] CID : %d tgid_open : %d tgid : %d len_peak_usage : %d page_peak_usage : %d\n",
+						fl->cid,
+						fl->tgid_open,
+						fl->tgid,
+						fl->len_peak_usage,
+						fl->page_peak_usage);
+				}
+			}
+
+			if (fl->page_peak_usage > fl->mem_profile->profile_page_peak_usage) {
+				fl->mem_profile->profile_page_peak_usage = fl->page_peak_usage;
+				if (sec_debug_level() < SEC_DEBUG_LEVEL_LOW) {
+					pr_err("[AISYS] [UPDATE_PAGE_PEAK_USAGE] CID : %d tgid_open : %d tgid : %d len_peak_usage : %d page_peak_usage : %d\n",
+						fl->cid,
+						fl->tgid_open,
+						fl->tgid,
+						fl->len_peak_usage,
+						fl->page_peak_usage);
+				}
+			}
+		}
+	}
+#endif
+
+
 	return err;
 }
 
@@ -1839,6 +1974,11 @@ static int fastrpc_buf_alloc(struct fastrpc_file *fl, size_t size,
 	buf->raddr = 0;
 	buf->type = buf_type;
 	ktime_get_real_ts64(&buf->buf_start_time);
+
+#if defined(SS_MEM_DEBUG)
+	buf->pid = current->pid;
+	strncpy(buf->comm, current->comm, TASK_COMM_LEN - 1);
+#endif
 
 	buf->virt = dma_alloc_attrs(fl->sctx->smmu.dev, buf->size,
 						(dma_addr_t *)&buf->phys,
@@ -3492,6 +3632,9 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	struct timespec64 invoket = {0};
 	uint64_t *perf_counter = NULL;
 	bool isasyncinvoke = false, isworkdone = false;
+	struct fastrpc_apps *me = &gfa;
+	struct exit_debug *debug_log = NULL;
+	int exit_debug_flag = 0;
 
 	cid = fl->cid;
 	VERIFY(err, VALID_FASTRPC_CID(cid) &&
@@ -3506,6 +3649,14 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	if (fl->profile) {
 		ktime_get_real_ts64(&invoket);
 	}
+	debug_log = &me->debug[me->exit_debug_index];
+	if (invoke->handle == 4 && (REMOTE_SCALARS_METHOD(invoke->sc) <= 3 && REMOTE_SCALARS_METHOD(invoke->sc) >= 1)) {
+			exit_debug_flag = 1;
+			debug_log->tid = current->pid;
+			debug_log->pid = fl->tgid;
+			debug_log->ns = get_timestamp_in_ns();
+			debug_log->mid = REMOTE_SCALARS_METHOD(invoke->sc);
+		}
 
 	if (!kernel) {
 		VERIFY(err, invoke->handle !=
@@ -3568,6 +3719,9 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 		goto bail;
 	if (isasyncinvoke)
 		goto invoke_end;
+	if (exit_debug_flag)
+		debug_log->stage = 1;
+
  wait:
 	/* Poll mode allowed only for non-static handle calls to dynamic CDSP process */
 	if (fl->poll_mode && (invoke->handle > FASTRPC_STATIC_HANDLE_MAX)
@@ -3604,6 +3758,9 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	VERIFY(err, 0 == (err = ctx->retval));
 	if (err)
 		goto bail;
+	if (exit_debug_flag)
+		debug_log->stage = 2;
+
  bail:
 	if (ctx && interrupted == -ERESTARTSYS) {
 		trace_fastrpc_context_interrupt(cid, (uint64_t)ctx,
@@ -3639,6 +3796,16 @@ invoke_end:
 	if (fl->profile && !interrupted && isasyncinvoke)
 		fastrpc_update_invoke_count(invoke->handle, perf_counter,
 						&invoket);
+	if (exit_debug_flag && err == 0)
+		debug_log->stage = 3;
+
+	if (exit_debug_flag) {
+		debug_log->error_code = err;
+		debug_log->ns = get_timestamp_in_ns() - debug_log->ns;
+		me->exit_debug_index++;
+		if (me->exit_debug_index > 3999)
+			me->exit_debug_index = 0;
+	}
 	return err;
 }
 
@@ -6197,9 +6364,33 @@ bail:
 	return ret;
 }
 
+#if defined(SS_MEM_PROFILE)
+static ssize_t ss_fastrpc_debugfs_read(struct file *file,
+const char __user *user_buf, size_t count, loff_t *ppos)
+{
+	struct mem_profile_private *mem_profile;
+	struct hlist_node *n;
+
+	hlist_for_each_entry_safe(mem_profile, n, &mem_profile_root, list_node) {
+		pr_err("[AISYS] [DEBUG_FS] CID : %d tgid_open : %d(%s) tgid : %d len_peak_usage : %d page_peak_usage : %d\n",
+			mem_profile->cid,
+			mem_profile->tgid_open,
+			mem_profile->comm,
+			mem_profile->tgid,
+			mem_profile->profile_len_peak_usage,
+			mem_profile->profile_page_peak_usage);
+	}
+
+	return count;
+}
+#endif
+
 static const struct file_operations debugfs_fops = {
 	.open = simple_open,
 	.read = fastrpc_debugfs_read,
+#if defined(SS_MEM_PROFILE)
+	.write = ss_fastrpc_debugfs_read,
+#endif
 };
 
 static int fastrpc_channel_open(struct fastrpc_file *fl)
@@ -6334,6 +6525,40 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
 						sizeof(struct dev_pm_qos_request),
 							GFP_KERNEL);
 	init_completion(&fl->shutdown);
+
+#if defined(SS_MEM_PROFILE)
+	{
+		struct mem_profile_private *mem_profile;
+		struct hlist_node *n;
+
+		fl->mem_profile = NULL;
+
+		if (!hlist_empty(&mem_profile_root)) {
+			hlist_for_each_entry_safe(mem_profile, n, &mem_profile_root, list_node) {
+				if (!strncmp(current->comm, mem_profile->comm, TASK_COMM_LEN - 1)) {
+					fl->mem_profile = mem_profile;
+					break;
+				}
+			}
+		}
+
+		if (IS_ERR_OR_NULL(fl->mem_profile)) {
+			if (mem_profile_entry < MAX_MEM_PROFILE_ENTRY) {
+				fl->mem_profile = kzalloc(sizeof(struct mem_profile_private), GFP_KERNEL);
+				INIT_HLIST_NODE(&fl->mem_profile->list_node);
+
+				fl->mem_profile->tgid_open = fl->tgid_open;
+				strncpy(fl->mem_profile->comm, current->comm, TASK_COMM_LEN - 1);
+				fl->mem_profile->profile_len_peak_usage = 0;
+				fl->mem_profile->profile_page_peak_usage = 0;
+
+				hlist_add_head(&fl->mem_profile->list_node, &mem_profile_root);
+				mem_profile_entry++;
+			}
+		}
+	}
+#endif
+
 	return 0;
 }
 
@@ -7611,6 +7836,7 @@ static void configure_secure_channels(uint32_t secure_domains)
 
 		me->channel[ii].secure = secure;
 		ADSPRPC_INFO("domain %d configured as secure %d\n", ii, secure);
+		printk("adsprpc: domain %d configured as secure %d\n", ii, secure);
 	}
 }
 
@@ -7721,6 +7947,27 @@ static struct attribute_group msm_remote_dsp_attr_group = {
 	.attrs = msm_remote_dsp_attrs,
 };
 
+#define CDSP_SIGNOFF_BLOCK 0x2377
+static char *signoff = NULL;
+module_param(signoff, charp, 0);
+MODULE_PARM_DESC(signoff, "singoff value");
+
+static unsigned int signoff_val;
+unsigned int is_signoff_block(void)
+{
+    pr_err("signoff: %s\n", signoff);
+
+    if (!IS_ERR_OR_NULL(signoff)) {
+        get_option(&signoff, &signoff_val);
+        pr_err("is_signoff_block : 0x%08x\n", signoff_val);
+
+        if (signoff_val == CDSP_SIGNOFF_BLOCK)
+                return 1;
+    }
+
+    return 0;
+}
+
 static int fastrpc_probe(struct platform_device *pdev)
 {
 	int err = 0;
@@ -7756,7 +8003,7 @@ static int fastrpc_probe(struct platform_device *pdev)
 		of_property_read_u32(dev->of_node, "qcom,rpc-latency-us",
 			&me->latency);
 		if (of_get_property(dev->of_node,
-			"qcom,secure-domains", NULL) != NULL) {
+			"qcom,secure-domains", NULL) != NULL && is_signoff_block()) {
 			VERIFY(err, !of_property_read_u32(dev->of_node,
 					  "qcom,secure-domains",
 			      &secure_domains));

@@ -1536,7 +1536,7 @@ static int a5xx_start(struct adreno_device *adreno_dev)
 			upper_32_bits(KGSL_IOMMU_SECURE_BASE32));
 		kgsl_regwrite(device, A5XX_RBBM_SECVID_TSB_TRUSTED_SIZE,
 			FIELD_PREP(GENMASK(31, 12),
-			(KGSL_IOMMU_SECURE_SIZE(&device->mmu) / SZ_4K)));
+				(KGSL_IOMMU_SECURE_SIZE(&device->mmu) / SZ_4K)));
 	}
 
 	a5xx_preemption_start(adreno_dev);

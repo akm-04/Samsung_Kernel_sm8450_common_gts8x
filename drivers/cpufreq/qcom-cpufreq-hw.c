@@ -20,6 +20,10 @@
 #include <linux/slab.h>
 #include <linux/qcom-cpufreq-hw.h>
 #include <linux/topology.h>
+#include <trace/events/power.h>
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+#include <linux/sec_pm_log.h>
+#endif
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/dcvsh.h>
@@ -73,6 +77,10 @@ struct cpufreq_qcom {
 	bool is_irq_enabled;
 	bool is_irq_requested;
 	bool exited;
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+	unsigned long lowest_freq;
+	bool limiting;
+#endif
 };
 
 struct cpufreq_counter {
@@ -122,6 +130,7 @@ static unsigned long limits_mitigation_notify(struct cpufreq_qcom *c,
 	u32 cpu;
 	unsigned long freq;
 	unsigned long max_capacity, capacity;
+	char lmh_debug[8] = {0};
 
 	cpu = cpumask_first(&c->related_cpus);
 	policy = cpufreq_cpu_get_raw(cpu);
@@ -144,8 +153,21 @@ static unsigned long limits_mitigation_notify(struct cpufreq_qcom *c,
 
 	arch_set_thermal_pressure(&c->related_cpus, max_t(unsigned long, 0,
 				  max_capacity - capacity));
+
+	snprintf(lmh_debug, 8, "lmh_%d", cpumask_first(&c->related_cpus));
+	trace_clock_set_rate(lmh_debug, freq, raw_smp_processor_id());
+
 	trace_dcvsh_freq(cpumask_first(&c->related_cpus), freq);
 	c->dcvsh_freq_limit = freq;
+
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+	if (c->limiting == false) {
+		ss_thermal_print("Start lmh cpu%d @%lu\n",
+			cpumask_first(&c->related_cpus), freq);
+		c->lowest_freq = freq;
+		c->limiting = true;
+	}
+#endif
 
 	return freq;
 }
@@ -169,6 +191,10 @@ static void limits_dcvsh_poll(struct work_struct *work)
 	dcvsh_freq = qcom_cpufreq_hw_get(cpu);
 
 	if (freq_limit < dcvsh_freq) {
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+		if ((c->limiting == true) && (freq_limit < c->lowest_freq))
+			c->lowest_freq = freq_limit;
+#endif
 		mod_delayed_work(system_highpri_wq, &c->freq_poll_work,
 				msecs_to_jiffies(LIMITS_POLLING_DELAY_MS));
 	} else {
@@ -181,6 +207,12 @@ static void limits_dcvsh_poll(struct work_struct *work)
 
 		c->is_irq_enabled = true;
 		enable_irq(c->dcvsh_irq);
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+		ss_thermal_print("Fin. lmh cpu%d, lowest %lu, f_lim %lu, dcvsh %lu\n",
+			cpu, c->lowest_freq, freq_limit, dcvsh_freq);
+		c->limiting = false;
+		c->lowest_freq = UINT_MAX;
+#endif
 	}
 
 out:
@@ -252,6 +284,8 @@ u64 qcom_cpufreq_get_cpu_cycle_counter(int cpu)
 }
 EXPORT_SYMBOL_GPL(qcom_cpufreq_get_cpu_cycle_counter);
 
+static void __cpufreq_hw_target_index_call_notifier_chain(struct cpufreq_policy *policy, unsigned int index);
+
 static int
 qcom_cpufreq_hw_target_index(struct cpufreq_policy *policy,
 			     unsigned int index)
@@ -264,6 +298,7 @@ qcom_cpufreq_hw_target_index(struct cpufreq_policy *policy,
 			writel_relaxed(index, c->pdmem_base);
 	}
 
+	__cpufreq_hw_target_index_call_notifier_chain(policy, index);
 	writel_relaxed(index, policy->driver_data + offsets[REG_PERF_STATE]);
 
 	return 0;
@@ -741,3 +776,26 @@ module_exit(qcom_cpufreq_hw_exit);
 
 MODULE_DESCRIPTION("QCOM CPUFREQ HW Driver");
 MODULE_LICENSE("GPL v2");
+
+#if IS_ENABLED(CONFIG_SEC_QC_SMEM)
+static ATOMIC_NOTIFIER_HEAD(target_index_notifier_list);
+
+int qcom_cpufreq_hw_target_index_register_notifier(struct notifier_block *nb)
+{
+	return	atomic_notifier_chain_register(&target_index_notifier_list, nb);
+}
+EXPORT_SYMBOL(qcom_cpufreq_hw_target_index_register_notifier);
+
+int qcom_cpufreq_hw_target_index_unregister_notifier(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_unregister(&target_index_notifier_list, nb);
+}
+EXPORT_SYMBOL(qcom_cpufreq_hw_target_index_unregister_notifier);
+
+static void __cpufreq_hw_target_index_call_notifier_chain(struct cpufreq_policy *policy, unsigned int index)
+{
+	atomic_notifier_call_chain(&target_index_notifier_list, index, policy);
+}
+#else
+static void __cpufreq_hw_target_index_call_notifier_chain(struct cpufreq_policy *policy, unsigned int index) {}
+#endif

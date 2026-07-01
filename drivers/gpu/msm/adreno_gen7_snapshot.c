@@ -359,7 +359,7 @@ static void gen7_snapshot_shader(struct kgsl_device *device,
 				}
 			}
 		}
-
+		
 		goto done;
 	}
 

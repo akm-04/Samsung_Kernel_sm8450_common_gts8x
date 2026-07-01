@@ -24,7 +24,7 @@
 #define SPI_NUM_CHIPSELECT	(4)
 #define SPI_XFER_TIMEOUT_MS	(250)
 #define SPI_AUTO_SUSPEND_DELAY	(250)
-#define SPI_XFER_TIMEOUT_OFFSET	(250)
+#define SPI_XFER_TIMEOUT_OFFSET  (250)
 /* SPI SE specific registers */
 #define SE_SPI_CPHA		(0x224)
 #define SE_SPI_LOOPBACK		(0x22C)
@@ -2280,6 +2280,7 @@ static int spi_geni_probe(struct platform_device *pdev)
 	 * in SPI LE dt.
 	 */
 	if (!geni_mas->is_le_vm) {
+		geni_mas->spi_rsc.ctrl_dev = geni_mas->dev;
 		ret = geni_se_resources_init(rsc, SPI_CORE2X_VOTE,
 					(DEFAULT_SE_CLK * DEFAULT_BUS_WIDTH));
 		if (ret) {

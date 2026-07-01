@@ -738,7 +738,7 @@ static ssize_t perfmon_filter_config_store(struct device *dev,
 			break;
 		}
 
-		if (kstrtoul(token, 0, &port)) {
+		if (kstrtoul(token, 0, &port) || port >= MAX_NUMBER_OF_PORTS) {
 			pr_err("filter configuration failed, Wrong format. Try again!\n");
 			goto filter_config_free;
 		}
@@ -889,7 +889,7 @@ static ssize_t perfmon_filter_remove_store(struct device *dev,
 			break;
 		}
 
-		if (kstrtoul(token, 0, &port))
+		if (kstrtoul(token, 0, &port) || port >= MAX_NUMBER_OF_PORTS)
 			break;
 
 		if (port >= MAX_NUMBER_OF_PORTS)

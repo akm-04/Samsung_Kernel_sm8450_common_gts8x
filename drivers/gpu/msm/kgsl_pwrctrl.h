@@ -243,11 +243,11 @@ int kgsl_pwrctrl_set_default_gpu_pwrlevel(struct kgsl_device *device);
 void kgsl_pwrctrl_request_state(struct kgsl_device *device, u32 state);
 
 /**
- * kgsl_pwrctrl_set_state - Set a specific power state
- * @device: Pointer to the kgsl device
- * @state: Power state requested
+ *kgsl_pwrctrl_set_state - Set a specific power state
+ *@device: Pointer to the kgsl device
+ *@state : Power state requested
  */
-void kgsl_pwrctrl_set_state(struct kgsl_device *device, u32 state);
+void kgsl_pwrctrl_set_state(struct kgsl_device* device, u32 state);
 
 /**
  * kgsl_pwrctrl_axi - Propagate bus votes during slumber entry and exit

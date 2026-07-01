@@ -312,6 +312,9 @@ static void adc_tm_map_temp_voltage(const struct adc_tm_map_pt *pts,
 int adc_tm_get_temp_vadc(struct adc_tm_sensor *sensor, int *temp)
 {
 	int rc;
+#if IS_ENABLED(CONFIG_SEC_EXT_THERMAL_MONITOR)
+	int milli_celsius;
+#endif /* CONFIG_SEC_EXT_THERMAL_MONITOR */
 
 	if (!sensor || !sensor->adc)
 		return -EINVAL;
@@ -326,6 +329,11 @@ int adc_tm_get_temp_vadc(struct adc_tm_sensor *sensor, int *temp)
 	rc = iio_read_channel_processed(sensor->adc, temp);
 	if (rc < 0)
 		return rc;
+#if IS_ENABLED(CONFIG_SEC_EXT_THERMAL_MONITOR)
+	milli_celsius = *temp;
+	if (sensor->ext_tm)
+		*temp = sec_convert_adc_to_temp(sensor->adc_ch, milli_celsius);
+#endif /* CONFIG_SEC_EXT_THERMAL_MONITOR */
 
 	return 0;
 }

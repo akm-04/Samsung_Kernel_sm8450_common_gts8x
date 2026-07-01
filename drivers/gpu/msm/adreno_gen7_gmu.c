@@ -2742,7 +2742,7 @@ static int gen7_first_boot(struct adreno_device *adreno_dev)
 	set_bit(GMU_PRIV_FIRST_BOOT_DONE, &gmu->flags);
 	set_bit(GMU_PRIV_GPU_STARTED, &gmu->flags);
 
-	/*
+ 	/*
 	 * BCL needs respective Central Broadcast register to
 	 * be programed from TZ. This programing happens only
 	 * when zap shader firmware load is successful. Zap firmware
@@ -3053,7 +3053,6 @@ static void gen7_gmu_touch_wakeup(struct adreno_device *adreno_dev)
 	set_bit(GMU_PRIV_GPU_STARTED, &gmu->flags);
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 done:

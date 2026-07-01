@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _CNSS_MAIN_H
@@ -53,7 +53,6 @@
 #define POWER_ON_RETRY_MAX_TIMES        3
 #define POWER_ON_RETRY_DELAY_MS         500
 #define WLFW_MAX_HANG_EVENT_DATA_SIZE   384
-#define CNSS_MBOX_MSG_MAX_LEN           64
 
 #define CNSS_EVENT_SYNC   BIT(0)
 #define CNSS_EVENT_UNINTERRUPTIBLE BIT(1)
@@ -74,7 +73,6 @@ struct cnss_vreg_cfg {
 	u32 load_ua;
 	u32 delay_us;
 	u32 need_unvote;
-	u32 is_supported;
 };
 
 struct cnss_vreg_info {
@@ -312,8 +310,6 @@ enum cnss_driver_state {
 	CNSS_DAEMON_CONNECTED,
 	CNSS_PCI_PROBE_DONE,
 	CNSS_DRIVER_REGISTER,
-	CNSS_FS_READY,
-	CNSS_DRIVER_REGISTERED = 25,
 };
 
 struct cnss_recovery_data {
@@ -371,18 +367,6 @@ struct cnss_cal_info {
 	enum cnss_cal_status cal_status;
 };
 
-/**
- * enum cnss_time_sync_period_vote - to get per vote time sync period
- * @TIME_SYNC_VOTE_WLAN: WLAN Driver vote
- * @TIME_SYNC_VOTE_CNSS: sys config vote
- * @TIME_SYNC_VOTE_MAX
- */
-enum cnss_time_sync_period_vote {
-	TIME_SYNC_VOTE_WLAN,
-	TIME_SYNC_VOTE_CNSS,
-	TIME_SYNC_VOTE_MAX,
-};
-
 struct cnss_control_params {
 	unsigned long quirks;
 	unsigned int mhi_timeout;
@@ -390,7 +374,6 @@ struct cnss_control_params {
 	unsigned int qmi_timeout;
 	unsigned int bdf_type;
 	unsigned int time_sync_period;
-	unsigned int time_sync_period_vote[TIME_SYNC_VOTE_MAX];
 };
 
 struct cnss_tcs_info {
@@ -437,20 +420,20 @@ enum cnss_timeout_type {
 	CNSS_TIMEOUT_DAEMON_CONNECTION,
 };
 
+struct cnss_thermal_cdev {
+   struct list_head tcdev_list;
+   int tcdev_id;
+   unsigned long curr_thermal_state;
+   unsigned long max_thermal_state;
+   struct device_node *dev_node;
+   struct thermal_cooling_device *tcdev;
+};
+
 struct cnss_sol_gpio {
 	int dev_sol_gpio;
 	int dev_sol_irq;
 	u32 dev_sol_counter;
 	int host_sol_gpio;
-};
-
-struct cnss_thermal_cdev {
-	struct list_head tcdev_list;
-	int tcdev_id;
-	unsigned long curr_thermal_state;
-	unsigned long max_thermal_state;
-	struct device_node *dev_node;
-	struct thermal_cooling_device *tcdev;
 };
 
 struct cnss_plat_data {
@@ -484,8 +467,8 @@ struct cnss_plat_data {
 	u8 hds_enabled;
 	unsigned long driver_state;
 	struct list_head event_list;
-	struct list_head cnss_tcdev_list;
-	struct mutex tcdev_lock; /* mutex for cooling devices list access */
+    struct list_head cnss_tcdev_list;
+    struct mutex tcdev_lock; /* mutex for cooling devices list access */
 	spinlock_t event_lock; /* spinlock for driver work event handling */
 	struct work_struct event_work;
 	struct workqueue_struct *event_wq;
@@ -549,7 +532,6 @@ struct cnss_plat_data {
 	u8 set_wlaon_pwr_ctrl;
 	struct cnss_tcs_info tcs_info;
 	bool fw_pcie_gen_switch;
-	u64 fw_caps;
 	u8 pcie_gen_speed;
 	struct cnss_dms_data dms;
 	int power_up_error;
@@ -557,21 +539,22 @@ struct cnss_plat_data {
 	struct mbox_client mbox_client_data;
 	struct mbox_chan *mbox_chan;
 	const char *vreg_ol_cpr, *vreg_ipa;
-	const char **pdc_init_table, **vreg_pdc_map, **pmu_vreg_map;
-	int pdc_init_table_len, vreg_pdc_map_len, pmu_vreg_map_len;
+	const char **pdc_init_table, **vreg_pdc_map;
+	int pdc_init_table_len, vreg_pdc_map_len;
 	bool adsp_pc_enabled;
 	u64 feature_list;
 	u8 charger_mode;
 	/* WLAN driver provided bandwidth vote */
 	int current_bw_vote;
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+	u8 dump_mode;
+	struct kobject *wifi_kobj;
+	struct completion macloader_done;
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 	u16 hang_event_data_len;
 	u32 hang_data_addr_offset;
 	/* bitmap to detect FEM combination */
 	u8 hwid_bitmap;
-	enum cnss_driver_mode driver_mode;
-	u32 num_shadow_regs_v3;
-	u32 on_chip_pmic_devices_count;
-	u32 *on_chip_pmic_board_ids;
 };
 
 #if IS_ENABLED(CONFIG_ARCH_QCOM)
@@ -648,8 +631,6 @@ int cnss_aop_mbox_init(struct cnss_plat_data *plat_priv);
 int cnss_aop_pdc_reconfig(struct cnss_plat_data *plat_priv);
 int cnss_aop_send_msg(struct cnss_plat_data *plat_priv, char *msg);
 void cnss_power_misc_params_init(struct cnss_plat_data *plat_priv);
-int cnss_aop_ol_cpr_cfg_setup(struct cnss_plat_data *plat_priv,
-			      struct wlfw_pmu_cfg_v01 *fw_pmu_cfg);
 int cnss_request_firmware_direct(struct cnss_plat_data *plat_priv,
 				 const struct firmware **fw_entry,
 				 const char *filename);
@@ -659,5 +640,4 @@ int cnss_get_feature_list(struct cnss_plat_data *plat_priv,
 			  u64 *feature_list);
 int cnss_get_input_gpio_value(struct cnss_plat_data *plat_priv, int gpio_num);
 bool cnss_check_driver_loading_allowed(void);
-void cnss_recovery_handler(struct cnss_plat_data *plat_priv);
 #endif /* _CNSS_MAIN_H */

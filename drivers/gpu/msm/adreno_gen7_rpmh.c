@@ -503,7 +503,7 @@ int gen7_build_rpmh_tables(struct adreno_device *adreno_dev)
 	ret = build_dcvs_table(adreno_dev);
 	if (ret) {
 		dev_err(adreno_dev->dev.dev, "Failed to build dcvs table\n");
-		return ret;
+ 		return ret;
 	}
 
 	ret = build_bw_table(adreno_dev);

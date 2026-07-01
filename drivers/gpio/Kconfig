@@ -1578,6 +1578,18 @@ config GPIO_MOXTET
 
 endmenu
 
+config SEC_GPIO_DVS
+	tristate "setting Samsung GPIO debugging and verification system"
+	help
+	  To verify gpio configurations of devices, set this feature.
+	  This feature should be enabled for user-debug mode.
+
+config SEC_GPIO_DUMP
+	tristate "Help to check MSM GPIO configuration"
+	help
+	  To debug msm gpio state, set this feature.
+	  This feature can be enabled for all modes.
+
 menu "USB GPIO expanders"
 	depends on USB
 

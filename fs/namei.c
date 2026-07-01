@@ -55,8 +55,8 @@
  * The new code replaces the old recursive symlink resolution with
  * an iterative one (in case of non-nested symlink chains).  It does
  * this with calls to <fs>_follow_link().
- * As a side effect, dir_namei(), _namei() and follow_link() are now 
- * replaced with a single function lookup_dentry() that can handle all 
+ * As a side effect, dir_namei(), _namei() and follow_link() are now
+ * replaced with a single function lookup_dentry() that can handle all
  * the special cases of the former code.
  *
  * With the new dcache, the pathname is stored at each inode, at least as
@@ -1205,13 +1205,21 @@ int follow_up(struct path *path)
 		read_sequnlock_excl(&mount_lock);
 		return 0;
 	}
+#ifdef CONFIG_KDP_NS
+	mntget(((struct kdp_mount *)parent)->mnt);
+#else
 	mntget(&parent->mnt);
+#endif
 	mountpoint = dget(mnt->mnt_mountpoint);
 	read_sequnlock_excl(&mount_lock);
 	dput(path->dentry);
 	path->dentry = mountpoint;
 	mntput(path->mnt);
+#ifdef CONFIG_KDP_NS
+	path->mnt = ((struct kdp_mount *)parent)->mnt;
+#else
 	path->mnt = &parent->mnt;
+#endif
 	return 1;
 }
 EXPORT_SYMBOL(follow_up);
@@ -1224,10 +1232,22 @@ static bool choose_mountpoint_rcu(struct mount *m, const struct path *root,
 
 		m = m->mnt_parent;
 		if (unlikely(root->dentry == mountpoint &&
+#ifdef CONFIG_KDP_NS
+			     root->mnt == ((struct kdp_mount *)m)->mnt))
+#else
 			     root->mnt == &m->mnt))
+#endif
 			break;
+#ifdef CONFIG_KDP_NS
+		if (mountpoint != ((struct kdp_mount *)m)->mnt->mnt_root) {
+#else
 		if (mountpoint != m->mnt.mnt_root) {
+#endif
+#ifdef CONFIG_KDP_NS
+			path->mnt = ((struct kdp_mount *)m)->mnt;
+#else
 			path->mnt = &m->mnt;
+#endif
 			path->dentry = mountpoint;
 			*seqp = read_seqcount_begin(&mountpoint->d_seq);
 			return true;
@@ -1430,8 +1450,13 @@ static bool __follow_mount_rcu(struct nameidata *nd, struct path *path,
 		if (flags & DCACHE_MOUNTED) {
 			struct mount *mounted = __lookup_mnt(path->mnt, dentry);
 			if (mounted) {
+#ifdef CONFIG_KDP_NS
+				path->mnt = ((struct kdp_mount *)mounted)->mnt;
+				dentry = path->dentry = ((struct kdp_mount *)mounted)->mnt->mnt_root;
+#else
 				path->mnt = &mounted->mnt;
 				dentry = path->dentry = mounted->mnt.mnt_root;
+#endif
 				nd->flags |= LOOKUP_JUMPED;
 				*seqp = read_seqcount_begin(&dentry->d_seq);
 				*inode = dentry->d_inode;
@@ -3722,6 +3747,9 @@ static long do_mknodat(int dfd, const char __user *filename, umode_t mode,
 	int error;
 	unsigned int lookup_flags = 0;
 
+	int debug = 0;
+	struct filename *fname = NULL;
+
 	error = may_mknod(mode);
 	if (error)
 		return error;
@@ -3730,6 +3758,20 @@ retry:
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
 
+	fname = getname(filename);
+
+	debug = fname && fname->name && !strncmp(fname->name, "/dev/remoteproc", strlen("/dev/remoteproc"));
+	
+	if (debug) {
+		pr_err("[%s] + %s %s\n", __func__, current->comm, fname->name);
+#if 0		
+		if (!strncmp(fname->name, "/dev/remoteproc4", strlen("/dev/remoteproc4"))) {
+			pr_err("[%s] skip mknod for %s\n", __func__, fname->name);
+			error = -EINVAL;
+			goto out;
+		}
+#endif
+	}
 	error = security_path_mknod(&path, dentry,
 			mode_strip_umask(path.dentry->d_inode, mode), dev);
 	if (error)
@@ -3754,6 +3796,10 @@ out:
 		lookup_flags |= LOOKUP_REVAL;
 		goto retry;
 	}
+
+	if (debug)
+		pr_err("[%s] - devnode : %s error : %d\n", __func__, fname?fname->name:"none", error);
+
 	return error;
 }
 
@@ -3910,6 +3956,10 @@ retry:
 	if (error)
 		goto exit3;
 	error = vfs_rmdir(path.dentry->d_inode, dentry);
+#ifdef CONFIG_PROC_DLOG
+	if (!error)
+		dlog_hook_rmdir(dentry, &path);
+#endif
 exit3:
 	dput(dentry);
 exit2:
@@ -4034,6 +4084,10 @@ retry_deleg:
 		if (error)
 			goto exit2;
 		error = vfs_unlink(path.dentry->d_inode, dentry, &delegated_inode);
+#ifdef CONFIG_PROC_DLOG
+		if (!error)
+			dlog_hook(dentry, inode, &path);
+#endif
 exit2:
 		dput(dentry);
 	}

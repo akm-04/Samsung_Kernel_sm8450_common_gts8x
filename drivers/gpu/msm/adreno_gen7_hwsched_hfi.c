@@ -1667,7 +1667,7 @@ static void gen7_add_profile_events(struct adreno_device *adreno_dev,
 	struct kgsl_drawobj *drawobj = DRAWOBJ(cmdobj);
 	struct kgsl_context *context = drawobj->context;
 	struct submission_info info = {0};
-	struct adreno_hwsched *hwsched = &adreno_dev->hwsched;
+	struct adreno_hwsched* hwsched = &adreno_dev->hwsched;
 
 	if (!time)
 		return;

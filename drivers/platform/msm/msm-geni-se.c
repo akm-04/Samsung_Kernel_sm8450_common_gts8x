@@ -1210,6 +1210,11 @@ int geni_se_resources_init(struct se_geni_rsc *rsc,
 	if (geni_se_dev->vectors == NULL)
 		return 0;
 
+	if(rsc->ctrl_dev != NULL)
+		GENI_LOG_DBG(geni_se_dev->log_ctx, false, geni_se_dev->dev,"%s: %s: START\n",__func__, dev_name(rsc->ctrl_dev));
+	else
+		GENI_LOG_DBG(geni_se_dev->log_ctx, false, geni_se_dev->dev,"%s: START\n",__func__);
+
 	mutex_lock(&geni_se_dev->geni_dev_lock);
 
 	if (IS_ERR_OR_NULL(geni_se_dev->bus_bw)) {
@@ -1254,6 +1259,10 @@ int geni_se_resources_init(struct se_geni_rsc *rsc,
 
 	INIT_LIST_HEAD(&rsc->ab_list);
 	INIT_LIST_HEAD(&rsc->ib_list);
+	if(rsc->ctrl_dev != NULL)
+		GENI_LOG_DBG(geni_se_dev->log_ctx, false, geni_se_dev->dev,"%s: %s: END\n",__func__, dev_name(rsc->ctrl_dev));
+	else
+		GENI_LOG_DBG(geni_se_dev->log_ctx, false, geni_se_dev->dev,"%s: END\n",__func__);
 	mutex_unlock(&geni_se_dev->geni_dev_lock);
 	return 0;
 }

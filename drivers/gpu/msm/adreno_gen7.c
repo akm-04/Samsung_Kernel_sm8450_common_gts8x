@@ -399,7 +399,7 @@ static void _set_secvid(struct kgsl_device *device)
 		upper_32_bits(KGSL_IOMMU_SECURE_BASE32));
 	kgsl_regwrite(device, GEN7_RBBM_SECVID_TSB_TRUSTED_SIZE,
 		FIELD_PREP(GENMASK(31, 12),
-		(KGSL_IOMMU_SECURE_SIZE(&device->mmu) / SZ_4K)));
+			(KGSL_IOMMU_SECURE_SIZE(&device->mmu) / SZ_4K)));
 }
 
 /*

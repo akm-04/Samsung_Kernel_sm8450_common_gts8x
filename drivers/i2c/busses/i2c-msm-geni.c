@@ -483,7 +483,7 @@ static int do_pending_cancel(struct geni_i2c_dev *gi2c)
 {
 	int timeout = 0;
 	u32 geni_ios = 0;
-
+	
 	/* doing pending cancel only rtl based SE's */
 	if (!gi2c->is_i2c_rtl_based)
 		return 0;
@@ -1490,7 +1490,7 @@ static int geni_i2c_xfer(struct i2c_adapter *adap,
 				pm_runtime_put_autosuspend(gi2c->dev);
 			}
 			atomic_set(&gi2c->is_xfer_in_progress, 0);
-			return ret; //Don't perform xfer is cancel failed
+ 			return ret; //Don't perform xfer is cancel failed
 		}
 	}
 

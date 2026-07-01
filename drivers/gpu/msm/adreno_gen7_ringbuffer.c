@@ -140,7 +140,7 @@ static int gen7_rb_context_switch(struct adreno_device *adreno_dev,
 
 	if (adreno_is_preemption_enabled(adreno_dev)) {
 		u64 gpuaddr = drawctxt->base.user_ctxt_record->memdesc.gpuaddr;
-
+		
 		cmds[count++] = cp_type7_packet(CP_SET_PSEUDO_REGISTER, 3);
 		cmds[count++] = SET_PSEUDO_NON_PRIV_SAVE_ADDR;
 		cmds[count++] = lower_32_bits(gpuaddr);

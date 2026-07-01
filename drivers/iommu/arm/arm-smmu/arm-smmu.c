@@ -958,6 +958,8 @@ static irqreturn_t arm_smmu_context_fault_retry(struct arm_smmu_domain *smmu_dom
 }
 #endif
 
+static __always_inline void __sec_debug_bug_on_enosys(struct arm_smmu_domain *smmu_domain, int idx);
+
 static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 {
 	u32 fsr;
@@ -1014,7 +1016,11 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 			print_fault_regs(smmu_domain, smmu, idx);
 			arm_smmu_verify_fault(smmu_domain, smmu, idx);
 		}
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+		__sec_debug_bug_on_enosys(smmu_domain, idx);
+#else
 		BUG_ON(!test_bit(DOMAIN_ATTR_NON_FATAL_FAULTS, smmu_domain->attributes));
+#endif
 	}
 	if (ret != -EBUSY) {
 		arm_smmu_cb_write(smmu, idx, ARM_SMMU_CB_FSR, fsr);
@@ -2408,7 +2414,7 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 	 * to 5-10sec worth of reprogramming the context bank, while
 	 * the system appears to be locked up to the user.
 	 */
-	pm_runtime_set_autosuspend_delay(smmu->dev, 20);
+	pm_runtime_set_autosuspend_delay(smmu->dev, 5);
 	pm_runtime_use_autosuspend(smmu->dev);
 
 out_power_off:
@@ -4407,3 +4413,71 @@ module_exit(arm_smmu_exit);
 MODULE_DESCRIPTION("IOMMU API for ARM architected SMMU implementations");
 MODULE_AUTHOR("Will Deacon <will@kernel.org>");
 MODULE_LICENSE("GPL v2");
+
+static const char *__arm_smmu_get_devname(struct device *dev)
+{
+	const char *token;
+	const char *delim = ":,.";
+	const char *devname;
+
+	token = dev_name(dev);
+	if (!token)
+		return "No Name";
+
+	pr_info("smmu client name - %s\n", token);
+
+	/* FIXME: the name of pci client only has delimeters and numbers */
+	if (dev_is_pci(dev))
+		return token;
+
+	while (true) {
+		devname = token;
+		token = strpbrk(token, delim);
+		if (!token)
+			break;
+		token++;	/* skip delimiter */
+	}
+
+	return devname;
+}
+
+static const char *arm_smmu_get_devname(const struct arm_smmu_domain *smmu_domain,
+		u32 sid)
+{
+	struct iommu_fwspec *fwspec = NULL;
+	struct device* dev = NULL;
+	unsigned int i;
+
+	if (smmu_domain->dev)
+		fwspec = dev_iommu_fwspec_get(smmu_domain->dev);
+
+	for (i = 0; fwspec && i < fwspec->num_ids; i++) {
+		if ((fwspec->ids[i] & smmu_domain->smmu->streamid_mask) == sid) {
+			dev = smmu_domain->dev;
+			break;
+		}
+	}
+
+	if (!fwspec || !dev)
+		return "No Device";
+
+	return __arm_smmu_get_devname(dev);
+}
+
+static __always_inline void __sec_debug_bug_on_enosys(
+		struct arm_smmu_domain *smmu_domain, int idx)
+{
+	bool cond = !test_bit(DOMAIN_ATTR_NON_FATAL_FAULTS, smmu_domain->attributes);
+	struct arm_smmu_device *smmu = smmu_domain->smmu;
+	u32 cbfrsynra;
+	u32 sid;
+
+	if (likely(!cond))
+		return;
+
+	cbfrsynra = arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBFRSYNRA(idx));
+	sid = cbfrsynra & CBFRSYNRA_SID_MASK;
+
+	panic("%s SMMU Fault - SID=0x%x", arm_smmu_get_devname(smmu_domain, sid), sid);
+
+}

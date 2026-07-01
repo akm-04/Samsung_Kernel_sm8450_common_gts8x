@@ -1170,6 +1170,7 @@ static int qcom_vadc7_scale_hw_calib_die_temp(
 	}
 
 	if (adcmap7_die_temp[ARRAY_SIZE(adcmap7_die_temp) - 1].x <= voltage) {
+		pr_err("ADC die_temp adc_code: %u voltage: %d\n", adc_code, voltage);
 		*result_mdec = DIE_TEMP_ADC7_MAX;
 		return 0;
 	}

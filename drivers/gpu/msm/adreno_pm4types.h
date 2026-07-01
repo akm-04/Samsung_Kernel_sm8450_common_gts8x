@@ -50,6 +50,7 @@
 /* Designate command streams to be executed before/after CP does state restore during preemption */
 #define CP_SET_AMBLE		0x55
 
+
 /*  Set internal CP registers, used to indicate context save data addresses */
 #define CP_SET_PSEUDO_REGISTER      0x56
 
@@ -187,6 +188,7 @@
 
 /* Used to define amble type in SET_AMBLE packet to execute during preemption */
 #define CP_KMD_AMBLE_TYPE 3
+
 
 static inline uint pm4_calc_odd_parity_bit(uint val)
 {

@@ -70,6 +70,8 @@ static size_t record_print_text(struct printk_info *pinfo, char *r_text, size_t 
 	size_t line_len;
 	size_t len = 0;
 	char *next;
+	size_t remained_size = buf_size;
+	size_t to_be_moved_size;
 
 	prefix_len = info_print_prefix(pinfo, prefix, PREFIX_MAX);
 
@@ -93,7 +95,8 @@ static size_t record_print_text(struct printk_info *pinfo, char *r_text, size_t 
 		if ((len + prefix_len + text_len + 1 + 1) > buf_size)
 			break;
 
-		memmove(text + prefix_len, text, text_len);
+		to_be_moved_size = min((remained_size - prefix_len), text_len);
+		memmove(text + prefix_len, text, to_be_moved_size);
 		memcpy(text, prefix, prefix_len);
 
 		/*
@@ -131,6 +134,7 @@ static size_t record_print_text(struct printk_info *pinfo, char *r_text, size_t 
 		 */
 
 		text_len -= line_len + 1;
+		remained_size -= prefix_len + line_len + 1;
 	}
 
 	/*

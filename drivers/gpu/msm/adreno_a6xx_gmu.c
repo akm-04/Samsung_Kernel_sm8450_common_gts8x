@@ -2728,7 +2728,7 @@ static int gmu_cx_gdsc_event(struct notifier_block *nb,
 
 static int a6xx_gmu_regulators_probe(struct a6xx_gmu_device *gmu,
 		struct platform_device *pdev)
-{
+{	
 	gmu->cx_gdsc = devm_regulator_get(&pdev->dev, "vddcx");
 	if (IS_ERR(gmu->cx_gdsc)) {
 		if (PTR_ERR(gmu->cx_gdsc) != -EPROBE_DEFER)
@@ -3245,7 +3245,6 @@ static int a6xx_first_boot(struct adreno_device *adreno_dev)
 	device->pwrscale.devfreq_enabled = true;
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 
@@ -3276,7 +3275,7 @@ static int a6xx_power_off(struct adreno_device *adreno_dev)
 	WARN_ON(!test_bit(GMU_PRIV_GPU_STARTED, &gmu->flags));
 
 	adreno_suspend_context(device);
-
+	
 	/*
 	 * adreno_suspend_context() unlocks the device mutex, which
 	 * could allow a concurrent thread to attempt SLUMBER sequence.
@@ -3542,7 +3541,6 @@ static void a6xx_gmu_touch_wakeup(struct adreno_device *adreno_dev)
 	set_bit(GMU_PRIV_GPU_STARTED, &gmu->flags);
 
 	device->pwrctrl.last_stat_updated = ktime_get();
-
 	kgsl_pwrctrl_set_state(device, KGSL_STATE_ACTIVE);
 
 done:

@@ -40,6 +40,9 @@
 #if IS_ENABLED(CONFIG_QTI_HW_KEY_MANAGER)
 #include <linux/hwkm.h>
 #endif
+#if IS_ENABLED(CONFIG_SEC_MMC_FEATURE)
+#include "mmc-sec-feature.h"
+#endif
 
 #define CORE_MCI_VERSION		0x50
 #define CORE_VERSION_MAJOR_SHIFT	28
@@ -1384,6 +1387,9 @@ retry:
 		if (rc)
 			return rc;
 		msm_host->saved_tuning_phase = phase;
+#if IS_ENABLED(CONFIG_SEC_MMC_FEATURE)
+		mmc_sec_save_tuning_phase(phase);
+#endif
 		dev_dbg(mmc_dev(mmc), "%s: Setting the tuning phase to %d\n",
 			 mmc_hostname(mmc), phase);
 		sdhci_msm_log_str(msm_host, "Setting the tuning phase to %d\n",
@@ -3945,6 +3951,17 @@ static void sdhci_msm_hw_reset(struct sdhci_host *host)
 	return;
 }
 
+#if IS_ENABLED(CONFIG_SEC_MMC_FEATURE)
+void sdhci_msm_sec_request_done(struct sdhci_host *host,
+		struct mmc_request *mrq)
+{
+	mmc_sec_check_request_error(host, mrq);
+
+	/* call mmc_request_done() to finish processing an MMC request */
+	mmc_request_done(host->mmc, mrq);
+}
+#endif
+
 static const struct sdhci_ops sdhci_msm_ops = {
 	.reset = sdhci_msm_reset,
 	.set_clock = sdhci_msm_set_clock,
@@ -3960,6 +3977,9 @@ static const struct sdhci_ops sdhci_msm_ops = {
 	.set_power = sdhci_set_power_noreg,
 	.hw_reset = sdhci_msm_hw_reset,
 	.set_timeout = sdhci_msm_set_timeout,
+#if IS_ENABLED(CONFIG_SEC_MMC_FEATURE)
+	.request_done = sdhci_msm_sec_request_done,
+#endif
 };
 
 #if IS_ENABLED(CONFIG_MMC_SDHCI_MSM_SCALING)
@@ -4760,6 +4780,9 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	sdhci_msm_get_of_property(pdev, host);
 
 	msm_host->saved_tuning_phase = INVALID_TUNING_PHASE;
+#if IS_ENABLED(CONFIG_SEC_MMC_FEATURE)
+	mmc_sec_save_tuning_phase(INVALID_TUNING_PHASE);
+#endif
 
 	ret = sdhci_msm_populate_pdata(dev, msm_host);
 	if (ret) {
@@ -5008,6 +5031,10 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	sdhci_msm_qos_init(msm_host);
 	/* Initialize sysfs entries */
 	sdhci_msm_init_sysfs_gating_qos(dev);
+
+#if IS_ENABLED(CONFIG_SEC_MMC_FEATURE)
+	mmc_set_sec_features(host->mmc, pdev);
+#endif
 
 #if IS_ENABLED(CONFIG_MMC_SDHCI_MSM_SCALING)
 	pwrseq_scale = kzalloc(sizeof(struct mmc_pwrseq), GFP_KERNEL);

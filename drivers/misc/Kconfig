@@ -510,6 +510,16 @@ config KINECTICS_XR_NORDIC
 	   the gpios and interrupt handler for handling the interrupt.
 
 source "drivers/misc/rtimd-i2c/Kconfig"
+
+config MZ_USE_QSEECOM
+	tristate "MZ Crypto TEE Driver"
+	depends on QSEECOM
+	help
+	  Enable MZ crypto Trusted Execution Environment support
+	  MZ use crypto function and it will be works in tee
+	  if it's supported
+	  This driver is interface for MZ NWd and MZ ta
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"

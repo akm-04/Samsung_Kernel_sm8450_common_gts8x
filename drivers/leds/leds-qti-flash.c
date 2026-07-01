@@ -974,6 +974,12 @@ static int qti_flash_led_calc_max_avail_current(
 		vph_flash_uv, vin_flash_uv, p_flash_fw;
 	union power_supply_propval prop = {};
 
+//Temp code added because QTI Flash has dependency with QTI battery charger. Kernel panic while taking capture with flash.
+#if 1 
+	*max_current_ma = MAX_FLASH_CURRENT_MA;
+	return 0;
+#endif
+
 	rc = qti_battery_charger_get_prop("battery", BATTERY_RESISTANCE,
 						&rbatt_uohm);
 	if (rc < 0) {

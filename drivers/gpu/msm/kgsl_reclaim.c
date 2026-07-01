@@ -265,6 +265,7 @@ static u32 kgsl_reclaim_process(struct kgsl_process_private *process,
 			next++;
 			continue;
 		}
+		
 
 		/* Do not reclaim pages mapped into a VBO */
 		if (atomic_read(&valid_entry->vbo_count)) {

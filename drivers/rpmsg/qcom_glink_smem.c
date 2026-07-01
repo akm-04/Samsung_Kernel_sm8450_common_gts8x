@@ -210,6 +210,8 @@ struct qcom_glink *qcom_glink_smem_register(struct device *parent,
 	size_t size;
 	int ret;
 
+	pr_err("QCT [%s] parent dev: %s\n", __func__, dev_name(parent));
+
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev)
 		return ERR_PTR(-ENOMEM);
@@ -320,6 +322,7 @@ void qcom_glink_smem_unregister(struct qcom_glink *glink)
 {
 	if (!glink)
 		return;
+	pr_err("QCT [%s] edge: %px\n", __func__, glink);
 
 	qcom_glink_native_remove(glink);
 	qcom_glink_native_unregister(glink);

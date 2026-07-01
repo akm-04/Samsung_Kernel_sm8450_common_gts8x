@@ -15,6 +15,9 @@
 #include <linux/cpumask.h>
 #include <linux/sched/walt.h>
 #include "thermal_zone_internal.h"
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+#include <linux/sec_pm_log.h>
+#endif
 
 enum thermal_pause_levels {
 	THERMAL_NO_CPU_PAUSE,
@@ -100,12 +103,14 @@ static int thermal_pause_hp_online(unsigned int online_cpu)
  */
 static int thermal_pause_work(struct thermal_pause_cdev *thermal_pause_cdev)
 {
-	int cpu = 0;
 	int ret = -EBUSY;
 	cpumask_t cpus_to_pause, cpus_to_notify;
 
 	cpumask_copy(&cpus_to_pause, &thermal_pause_cdev->cpu_mask);
 	pr_debug("Pause:%*pbl\n", cpumask_pr_args(&thermal_pause_cdev->cpu_mask));
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+	ss_thermal_print("Pause:%*pbl\n", cpumask_pr_args(&thermal_pause_cdev->cpu_mask));
+#endif
 
 	mutex_unlock(&cpus_pause_lock);
 	ret = walt_pause_cpus(&cpus_to_pause);
@@ -115,21 +120,11 @@ static int thermal_pause_work(struct thermal_pause_cdev *thermal_pause_cdev)
 		/* remove CPUs that have already been notified */
 		cpumask_andnot(&cpus_to_notify, &thermal_pause_cdev->cpu_mask,
 			       &cpus_in_max_cooling_level);
-
-		for_each_cpu(cpu, &cpus_to_notify)
-			blocking_notifier_call_chain(&thermal_pause_notifier, 1,
-						     (void *)(long)cpu);
-
-		/* track CPUs currently in cooling level */
-		cpumask_or(&cpus_in_max_cooling_level,
-			   &cpus_in_max_cooling_level,
-			   &thermal_pause_cdev->cpu_mask);
 	} else {
 		/* Failure. These cpus not paused by thermal */
 		pr_err("Error pausing CPU:%*pbl. err:%d\n",
 		       cpumask_pr_args(&thermal_pause_cdev->cpu_mask), ret);
 	}
-
 	return ret;
 }
 
@@ -153,6 +148,9 @@ static int thermal_resume_work(struct thermal_pause_cdev *thermal_pause_cdev)
 
 	cpumask_copy(&cpus_to_unpause, &thermal_pause_cdev->cpu_mask);
 	pr_debug("Unpause:%*pbl\n", cpumask_pr_args(&cpus_to_unpause));
+#if IS_ENABLED(CONFIG_SEC_PM_LOG)
+	ss_thermal_print("Unpause:%*pbl\n", cpumask_pr_args(&thermal_pause_cdev->cpu_mask));
+#endif
 
 	mutex_unlock(&cpus_pause_lock);
 	ret = walt_resume_cpus(&cpus_to_unpause);

@@ -17,6 +17,7 @@
 #include <linux/devcoredump.h>
 #include <linux/soc/qcom/mdt_loader.h>
 
+
 #define SIZEOF_ELF_STRUCT(__xhdr) \
 static inline size_t sizeof_elf_##__xhdr(unsigned char class) \
 { \
@@ -70,6 +71,12 @@ bool dump_enabled(void)
 	return enable_dump_collection;
 }
 EXPORT_SYMBOL(dump_enabled);
+
+void set_dump_enabled(int val)
+{
+	enable_dump_collection = val;
+}
+EXPORT_SYMBOL(set_dump_enabled);
 
 static ssize_t qcom_devcd_readv(char *buffer, loff_t offset, size_t count,
 			   void *data, size_t datalen)

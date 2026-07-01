@@ -454,6 +454,13 @@ struct mem_size_stats {
 	unsigned long shmem_thp;
 	unsigned long file_thp;
 	unsigned long swap;
+#if IS_ENABLED(CONFIG_ZRAM)
+	unsigned long writeback;
+	unsigned long writeback_huge;
+	unsigned long same;
+	unsigned long huge;
+	unsigned long swap_shared;
+#endif
 	unsigned long shared_hugetlb;
 	unsigned long private_hugetlb;
 	u64 pss;
@@ -590,6 +597,24 @@ static void smaps_pte_entry(pte_t *pte, unsigned long addr,
 			} else {
 				mss->swap_pss += (u64)PAGE_SIZE << PSS_SHIFT;
 			}
+#if IS_ENABLED(CONFIG_ZRAM)
+			if (zram_oem_fn) {
+				int type = zram_oem_fn(ZRAM_GET_ENTRY_TYPE,
+							NULL, swp_offset(swpent));
+				if (type == ZRAM_WB_TYPE || type == ZRAM_WB_HUGE_TYPE)
+					mss->writeback += PAGE_SIZE;
+				if (type == ZRAM_WB_HUGE_TYPE)
+					mss->writeback_huge += PAGE_SIZE;
+				if (mapcount >= 2) {
+					mss->swap_shared += PAGE_SIZE;
+				} else {
+					if (type == ZRAM_SAME_TYPE)
+						mss->same += PAGE_SIZE;
+					if (type == ZRAM_HUGE_TYPE)
+						mss->huge += PAGE_SIZE;
+				}
+			}
+#endif
 		} else if (is_migration_entry(swpent)) {
 			migration = true;
 			page = migration_entry_to_page(swpent);
@@ -888,6 +913,13 @@ static void __show_smap(struct seq_file *m, const struct mem_size_stats *mss,
 	SEQ_PUT_DEC(" kB\nSwap:           ", mss->swap);
 	SEQ_PUT_DEC(" kB\nSwapPss:        ",
 					mss->swap_pss >> PSS_SHIFT);
+#if IS_ENABLED(CONFIG_ZRAM)
+	SEQ_PUT_DEC(" kB\nWriteback:      ", mss->writeback);
+	SEQ_PUT_DEC(" kB\nWritebackHuge:  ", mss->writeback_huge);
+	SEQ_PUT_DEC(" kB\nSame:           ", mss->same);
+	SEQ_PUT_DEC(" kB\nHuge:           ", mss->huge);
+	SEQ_PUT_DEC(" kB\nSwapShared:     ", mss->swap_shared);
+#endif
 	SEQ_PUT_DEC(" kB\nLocked:         ",
 					mss->pss_locked >> PSS_SHIFT);
 	seq_puts(m, " kB\n");

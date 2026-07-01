@@ -230,6 +230,9 @@ static void clear_pbl_done(struct qcom_spss *spss)
 	if (err_value) {
 		dev_err(spss->dev, "PBL error status register: 0x%08x, spare0 register: 0x%08x, spare1 register: 0x%08x, spare2 register: 0x%08x\n",
 			err_value, rmb_err_spare0, rmb_err_spare1, rmb_err_spare2);
+		if ((err_value == 0xFFFFFFFF) && (rmb_err_spare0 == 0xFFFFFFFF) && (rmb_err_spare1 == 0xFFFFFFFF) && (rmb_err_spare2 == 0x00000000)) {
+			panic("Panicking, remoterpoc %s might got crashed\n", spss->rproc->name);
+		}
 	} else
 		dev_info(spss->dev, "PBL_DONE - 1st phase loading [%s] completed ok\n",
 			 spss->rproc->name);

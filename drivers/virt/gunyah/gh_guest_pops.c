@@ -116,6 +116,26 @@ static ssize_t gh_guest_set_app_status(struct kobject *kobj,
 
 	ret = kstrtou16(buf, 0, &app_status);
 	if (ret)
+
+	return 0;
+
+fail_init:
+	input_unregister_device(gh_vm_poff_input);
+fail_register:
+	input_free_device(gh_vm_poff_input);
+	return ret;
+}
+
+static ssize_t gh_guest_set_app_status(struct kobject *kobj,
+	struct kobj_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	int ret = 0;
+	u16 app_status;
+
+	ret = kstrtou16(buf, 0, &app_status);
+	if (ret)
 		return -EINVAL;
 
 	if (app_status != GH_RM_APP_STATUS_TUI_SERVICE_BOOT)

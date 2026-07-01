@@ -163,6 +163,8 @@ for ORIG_MERGE_FILE in $MERGE_LIST ; do
 	# In case the previous file lacks a new line at the end
 	echo >> $TMP_FILE
 	cat $MERGE_FILE >> $TMP_FILE
+	# Add new line for merging next configuration file
+	echo >> $TMP_FILE
 done
 
 if [ "$STRICT_MODE_VIOLATED" = "true" ]; then
