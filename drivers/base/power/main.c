@@ -903,12 +903,14 @@ static void __device_resume(struct device *dev, pm_message_t state, bool async)
 
 	if (!dev->power.is_suspended)
 		goto Complete;
+	
+	dev->power.is_suspended = false;
 
 	if (dev->power.direct_complete) {
 		/* Match the pm_runtime_disable() in __device_suspend(). */
 		pm_runtime_enable(dev);
 		goto Complete;
-	}
+	}	
 
 	if (!dpm_wait_for_superior(dev, async))
 		goto Complete;
@@ -959,7 +961,7 @@ static void __device_resume(struct device *dev, pm_message_t state, bool async)
 
  End:
 	error = dpm_run_callback(callback, dev, state, info);
-	dev->power.is_suspended = false;
+	
 
 	device_unlock(dev);
 	dpm_watchdog_clear(&wd);

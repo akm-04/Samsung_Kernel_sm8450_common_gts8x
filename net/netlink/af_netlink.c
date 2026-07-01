@@ -2264,6 +2264,7 @@ static int netlink_dump(struct sock *sk, bool lock_taken)
 
 	if (nlk->dump_done_errno > 0 ||
 	    skb_tailroom(skb) < nlmsg_total_size(sizeof(nlk->dump_done_errno))) {
+
 		mutex_unlock(nlk->cb_mutex);
 
 		if (sk_filter(sk, skb))
